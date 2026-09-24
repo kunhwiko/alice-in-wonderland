@@ -1,0 +1,586 @@
+/* Wonderland — a storybook page in the 1951 film's palette.
+   Deliberately light: this is a golden afternoon, not a rabbit hole.
+
+   The background is a full-bleed painting behind a cream veil (see
+   body::before / body::after). Text that sits straight on it — group labels,
+   the empty state, the footer — carries a light halo to stay legible. If you
+   lighten the veil further, strengthen those halos to match. */
+
+:root {
+  color-scheme: light;
+
+  /* ---- page ---- */
+  --paper:      #fbf6e9;  /* storybook leaf */
+  --paper-warm: #f5ecd7;
+  --card:       #ffffff;  /* Alice's pinafore */
+  --card-2:     #f7f2e4;
+  --line:       #e0d4b8;
+  --line-soft:  #efe6d0;
+
+  --ink:        #29263a;  /* the film's near-black outline */
+  --ink-soft:   #625b74;
+  --muted:      #918a9e;
+
+  /* ---- the dress ---- */
+  --alice:      #4f8fd4;
+  --alice-deep: #2f6bad;
+  --alice-wash: #e4eff9;
+
+  /* ---- the Queen ---- */
+  --heart:      #cf1f36;
+  --heart-deep: #a5142a;
+  --heart-wash: #fde8ea;
+
+  /* ---- the Cheshire Cat ---- */
+  --chesh:      #b8489b;
+  --chesh-soft: #e79ccb;
+  --chesh-wash: #fbe9f5;
+
+  /* ---- the White Rabbit's waistcoat ---- */
+  --gold:       #d29b1e;
+  --gold-deep:  #a8760d;
+  --gold-wash:  #fcf2d6;
+
+  /* ---- the garden ---- */
+  --garden:     #5b9147;
+  --garden-wash:#e9f3e4;
+
+  /* Background and veil. The painting is busy and fully saturated, so the
+     veil has to hold it back — below about .75 the text on bare background
+     starts to struggle even with its halo. */
+  --bg-image: url("/bg-garden.jpg");
+  --bg-blur: 1.5px;
+  --veil-top: .55;
+  --veil-a: .78;
+  --veil-b: .82;
+  --veil:
+    radial-gradient(1200px 520px at 50% -140px,
+      rgba(255,253,244,var(--veil-top)) 0%, rgba(255,253,244,0) 72%),
+    linear-gradient(rgba(251,246,233,var(--veil-a)) 0%,
+      rgba(251,246,233,var(--veil-b)) 55%, rgba(251,246,233,var(--veil-a)) 100%);
+
+  /* Halo behind any text that sits straight on the painting. Raise it if you
+     lighten the veil. */
+  --halo: 0 1px 0 rgba(255,253,244,.95), 0 0 10px rgba(255,253,244,.85);
+
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(41,38,58,.05), 0 8px 22px -12px rgba(41,38,58,.28);
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  /* Display face for the masthead only. Baskerville is the period-correct
+     choice — a 1757 transitional, the sort of face Alice's first editions
+     were set in. Swap to Didot for something colder and higher-contrast. */
+  --display: Baskerville, "Hoefler Text", Didot, "Bodoni 72", Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+
+/* The base colour lives on <html>, not <body>: body's own background would
+   paint over the negative-z-index pseudo-elements below. */
+html { background: var(--paper); }
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  background: transparent;
+}
+
+/* The painting: fixed and covering, with just enough blur to soften detail
+   without losing the scene. Scaled up slightly so the blur doesn't bleed a
+   soft edge into view. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background: var(--bg-image) center center / cover no-repeat;
+  filter: blur(var(--bg-blur)) saturate(1);
+  transform: scale(1.03);
+}
+
+
+/* The veil, ~.80. Low enough to make out the garden, the tea-party and the
+   rabbit hole; high enough that opaque cards and haloed text still read.
+   The radial on top keeps the golden-afternoon light coming from above. */
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: var(--veil);
+  background-repeat: no-repeat, no-repeat;
+}
+
+
+code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+
+/* ------------------------------------------------------------------ header */
+
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 20px 28px 18px;
+  /* The White Rabbit's watches and keys, sitting ON TOP of the white wash —
+     first background layer wins — so they read as printing on the paper
+     rather than something under frosted glass. */
+  background-image:
+    url("/header-watches.svg"),
+    linear-gradient(rgba(255,255,255,.9), rgba(255,255,255,.9));
+  background-repeat: repeat, no-repeat;
+  background-size: 216px 88px, auto;
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5;
+}
+/* the Cheshire Cat's stripes, run along the foot of the masthead */
+header::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px;
+  background: repeating-linear-gradient(
+    100deg,
+    var(--chesh) 0 16px, var(--chesh-soft) 16px 32px
+  );
+  opacity: .82;
+}
+
+.brand { display: flex; align-items: center; gap: 14px; }
+#portrait {
+  width: 52px; height: 52px; border-radius: 50%; object-fit: cover;
+  background: #fff; border: 1px solid var(--line);
+  box-shadow: 0 1px 5px rgba(41,38,58,.16), inset 0 0 0 2px #fff;
+  flex: 0 0 auto;
+}
+
+h1 {
+  margin: 0; font-family: var(--display); font-weight: 400;
+  /* clamp so "Alice in Wonderland" scales down on a narrow window instead of
+     wrapping under the portrait. */
+  font-size: clamp(21px, 3.2vw, 31px);
+  letter-spacing: .5px; color: var(--ink); white-space: nowrap;
+  text-shadow: 0 1px 0 #fff;
+}
+h1::after {
+  content: "♠ ♥ ♦ ♣";
+  margin-left: 12px; font-size: 11px; letter-spacing: 4px; vertical-align: 4px;
+  white-space: nowrap;
+  background: linear-gradient(90deg, var(--ink) 0 25%, var(--heart) 25% 75%, var(--ink) 75%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  opacity: .5;
+}
+.brand p {
+  margin: 2px 0 0; color: var(--ink-soft);
+  font-family: var(--serif); font-style: italic; font-size: 14.5px;
+}
+
+main { max-width: 880px; margin: 0 auto; padding: 26px 28px 40px; }
+
+/* Below this the masthead has to choose between the ornaments and the title. */
+@media (max-width: 720px) {
+  h1::after { display: none; }
+}
+
+/* ------------------------------------------------------------------ groups */
+
+/* ~ Waiting on you ~ — a ruled storybook section break, with an Alice whose
+   mood matches the section: expectant, mid-tumble, or fast asleep. */
+.group-label {
+  margin: 32px 0 14px; display: flex; align-items: center; gap: 12px;
+  font-family: var(--serif); font-style: italic; font-size: 16px;
+  color: var(--ink); letter-spacing: .2px;
+  text-shadow: var(--halo);
+}
+.group-label::before {
+  content: ""; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 50%;
+  background: #fff center/cover no-repeat;
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 4px rgba(41,38,58,.14), inset 0 0 0 2px #fff;
+}
+.group-label::after {
+  content: ""; height: 1px; flex: 1;
+  background: linear-gradient(to right, rgba(41,38,58,.28), transparent);
+}
+.g-needs::before   { background-image: url("/characters/waiting.png"); border-color: var(--heart); }
+.g-working::before { background-image: url("/characters/busy.png");    border-color: var(--gold); }
+.g-resting::before { background-image: url("/characters/rest.png");    border-color: var(--garden); }
+/* Alice dismayed, hands to her face — for the sessions that have stopped. */
+.g-stopped::before { background-image: url("/characters/stopped.png"); border-color: var(--muted); }
+.group-label .count {
+  background: var(--heart); color: #fff; border-radius: 999px;
+  padding: 1px 10px; font-size: 11px; font-weight: 700;
+  font-family: ui-sans-serif, system-ui, sans-serif; font-style: normal;
+  box-shadow: 0 1px 0 var(--heart-deep);
+}
+
+/* shown only when the queue is completely clear */
+.empty {
+  color: var(--ink); font-family: var(--serif); font-style: italic; font-size: 16.5px;
+  padding: 26px 4px 48px; text-align: center;
+  text-shadow: var(--halo);
+}
+/* Framed like a plate in a storybook. A frame suits any artwork — blending
+   the white out only works for line art, and turns a dark scene to mud. */
+.empty::before {
+  content: ""; display: block;
+  width: min(340px, 100%); aspect-ratio: 4 / 3; margin: 0 auto 18px;
+  background: #fff center/cover no-repeat url("/characters/empty.png");
+  border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 2px 4px rgba(41,38,58,.07), 0 14px 30px -14px rgba(41,38,58,.4);
+}
+
+/* ------------------------------------------------------------------- cards */
+
+.card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 15px 17px 20px; margin-bottom: 12px;
+  box-shadow: var(--shadow);
+  transition: transform .14s, box-shadow .14s, border-color .14s;
+}
+.card:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(41,38,58,.06), 0 12px 26px -12px rgba(41,38,58,.34); }
+
+/* Index pips in opposite corners, the bottom one inverted, the way a real
+   playing card is printed. Rendered as elements, not pseudos: .card::after is
+   free but .card.needs-you::before is already the painted-rose edge, and a
+   card needs two. */
+.pip {
+  position: absolute; font-size: 15px; line-height: 1;
+  color: var(--line); pointer-events: none; user-select: none;
+}
+.pip-tl { top: 10px; left: 13px; }
+.pip-br { bottom: 10px; right: 13px; transform: rotate(180deg); }
+
+.card.needs-you {
+  border-color: var(--heart);
+  background:
+    linear-gradient(var(--heart-wash), var(--card) 52%);
+  box-shadow: 0 1px 2px rgba(207,31,54,.10), 0 10px 26px -14px rgba(207,31,54,.55);
+  animation: heartbeat 2.6s ease-in-out infinite;
+}
+.card.needs-you .pip { color: var(--heart); }
+/* painted-rose edge */
+.card.needs-you::before {
+  content: ""; position: absolute; left: -1px; top: 14px; bottom: 14px; width: 3px;
+  border-radius: 3px; background: var(--heart);
+}
+@keyframes heartbeat {
+  0%, 100% { box-shadow: 0 1px 2px rgba(207,31,54,.10), 0 10px 26px -14px rgba(207,31,54,.55); }
+  50%      { box-shadow: 0 1px 2px rgba(207,31,54,.15), 0 12px 30px -10px rgba(207,31,54,.68); }
+}
+@media (prefers-reduced-motion: reduce) { .card.needs-you { animation: none; } }
+
+.card.working { border-color: #bcd6ef; background: linear-gradient(var(--alice-wash), var(--card) 52%); }
+.card.working .pip     { color: var(--alice-deep); }
+.card.idle .pip        { color: var(--garden); }
+.card.interrupted, .card.failed, .card.gone { background: var(--card-2); }
+.card.interrupted .pip { color: var(--muted); }
+.card.failed .pip      { color: var(--heart); }
+.card.gone .pip        { color: var(--muted); }
+.card.stopped            { background: var(--card-2); }
+.card.stopped .pip     { color: var(--muted); }
+.card.stopped .name      { text-decoration: line-through; text-decoration-color: var(--line); }
+
+.card-head {
+  display: flex; align-items: baseline; gap: 10px; cursor: pointer;
+  padding: 0 26px 0 22px;
+}
+/* The name and badges hold their size; only the path gives way. Without
+   flex-shrink:0 a long cwd squeezes "wl-sub" onto two lines. */
+.name {
+  font-family: var(--serif); font-size: 17.5px; font-weight: 600;
+  flex: 0 0 auto; white-space: nowrap;
+}
+.cwd {
+  color: var(--muted); font-size: 11.5px; margin-left: auto;
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.badge {
+  font-size: 10.5px; letter-spacing: .04em; text-transform: lowercase;
+  padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-soft); background: var(--card-2);
+  flex: 0 0 auto; white-space: nowrap;
+}
+.badge.needs-you { border-color: var(--heart);  color: var(--heart-deep); background: var(--heart-wash); }
+.badge.working   { border-color: var(--alice);  color: var(--alice-deep); background: var(--alice-wash); }
+.badge.idle      { border-color: var(--garden); color: var(--garden);     background: var(--garden-wash); }
+.badge.external  { border-color: var(--gold);   color: var(--gold-deep);  background: var(--gold-wash); }
+.badge.model     { border-color: var(--alice);  color: var(--alice-deep); background: var(--alice-wash); font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; }
+.badge.helpers   { border-color: var(--chesh);  color: var(--chesh);      background: var(--chesh-wash); }
+.badge.helpers::before { content: "⚯ "; }
+.badge.helpers.running { border-color: var(--alice); color: var(--alice-deep); background: var(--alice-wash); }
+
+.sub { color: var(--ink-soft); font-size: 13.5px; margin-top: 6px; font-family: var(--serif); }
+.body { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 14px; }
+
+/* Claude's literal words and commands — plain, scannable, never decorated. */
+pre.tool {
+  background: #fdfaf1; border: 1px solid var(--line-soft); border-left: 3px solid var(--alice);
+  border-radius: 7px; padding: 10px 12px; overflow-x: auto; margin: 7px 0;
+  white-space: pre-wrap; word-break: break-word; color: #34304a;
+}
+.field-label {
+  font-size: 10px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .1em; margin-top: 12px; font-weight: 700;
+}
+
+/* ----------------------------------------------------------------- controls */
+
+button {
+  font: inherit; font-size: 14px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--card);
+  color: var(--ink); padding: 7px 14px; cursor: pointer;
+  transition: background .13s, border-color .13s, color .13s, box-shadow .13s;
+}
+button:hover { border-color: var(--alice); background: var(--alice-wash); }
+button.primary {
+  background: linear-gradient(var(--alice), var(--alice-deep));
+  border-color: var(--alice-deep); color: #fff; font-weight: 600;
+  box-shadow: 0 1px 0 rgba(47,107,173,.5);
+}
+button.primary:hover { background: var(--alice-deep); }
+button.danger { border-color: var(--heart); color: var(--heart); background: var(--card); }
+button.danger:hover { background: var(--heart); color: #fff; border-color: var(--heart-deep); }
+/* armed: the second click is the one that ends a process, so it looks like it */
+button.danger.armed {
+  background: var(--heart); color: #fff; border-color: var(--heart-deep); font-weight: 650;
+  box-shadow: 0 0 0 3px var(--heart-wash);
+}
+button:disabled { opacity: .5; cursor: default; }
+.badge.stopped { border-color: var(--muted); color: var(--muted); }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+button.ghost:hover { background: var(--card-2); color: var(--ink); border-color: var(--line); }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+
+input, textarea, select {
+  font: inherit; width: 100%; background: #fffefa; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px;
+}
+textarea { resize: vertical; }
+input:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--alice); box-shadow: 0 0 0 3px var(--alice-wash);
+}
+::placeholder { color: #b6ac9c; font-style: italic; }
+
+/* ---------------------------------------------------------------- messages */
+
+.log {
+  max-height: 340px; overflow-y: auto; padding-right: 4px;
+  border-left: 2px solid var(--line-soft); padding-left: 13px;
+}
+.msg { margin: 11px 0; }
+.msg .who {
+  font-size: 10px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .1em; font-weight: 700;
+}
+.msg .text { white-space: pre-wrap; }
+.msg.user .who  { color: var(--alice-deep); }
+.msg.user .text { color: var(--ink-soft); font-style: italic; }
+
+/* -------------------------------------------------------------- subagents */
+
+/* Nested rows, not cards. Subagents can't be resumed, messaged or stopped, so
+   nothing here is clickable except the row's own expand. */
+.helpers { margin: 14px 0 4px; }
+.helper {
+  border-left: 2px solid var(--line);
+  padding: 8px 0 8px 12px; margin-left: 4px;
+}
+.helper + .helper { margin-top: 3px; }
+.helper-running { border-left-color: var(--alice); }
+.helper-done    { border-left-color: var(--garden); }
+
+.helper-head { display: flex; align-items: baseline; gap: 9px; cursor: pointer; }
+.helper-head::before {
+  content: "▸"; color: var(--alice-deep); font-size: 14px; flex: 0 0 auto;
+  transition: transform .12s; line-height: 1.2;
+}
+.helper-head:hover::before { color: var(--heart); }
+.helper.open .helper-head::before { transform: rotate(90deg); }
+.helper-head:hover .helper-type { color: var(--alice-deep); }
+.helper-type {
+  font-family: var(--serif); font-size: 14px; font-weight: 600;
+  color: var(--ink); flex: 0 0 auto;
+}
+.helper-desc {
+  font-size: 12.5px; color: var(--ink-soft);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.helper-state {
+  margin-left: auto; flex: 0 0 auto;
+  font-family: var(--serif); font-style: italic; font-size: 11.5px; color: var(--muted);
+}
+.helper-running .helper-state { color: var(--alice-deep); }
+
+.helper-tools { color: var(--muted); font-size: 11.5px; margin-top: 4px; padding-left: 16px; }
+/* Clamped to three lines so several helpers don't bury the card; the row's
+   caret opens the rest. Visible by default either way. */
+.helper-text {
+  margin-top: 8px; padding: 9px 11px; margin-left: 16px;
+  background: #fdfaf1; border: 1px solid var(--line-soft); border-radius: 6px;
+  font-size: 13px; white-space: pre-wrap; color: var(--ink-soft);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.helper-text.open { display: block; -webkit-line-clamp: unset; overflow: visible; }
+
+/* ----------------------------------------------------------------- decree */
+
+/* The permission prompt. Framed and weighted so a decision never reads as
+   ordinary card body — a misclick here runs something real. Nothing
+   decorative sits between the command and the buttons. */
+.decree {
+  position: relative; margin: 4px 0 2px;
+  background: linear-gradient(#fffdf6, #fdf8ea);
+  border: 1px solid var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.9), 0 2px 10px -4px rgba(168,118,13,.35);
+  border-radius: 10px; padding: 0 16px 15px;
+}
+
+.decree-banner {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 -16px 12px; padding: 8px 16px;
+  border-bottom: 1px solid var(--gold-wash);
+  background: linear-gradient(rgba(210,155,30,.10), rgba(210,155,30,.03));
+  border-radius: 10px 10px 0 0;
+}
+.decree-banner::before, .decree-banner::after {
+  content: "❦"; color: var(--gold); font-size: 12px; opacity: .8;
+}
+.decree-banner::after { margin-left: auto; }
+.decree-tool {
+  font-family: var(--serif); font-size: 12.5px; font-weight: 600;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--gold-deep);
+}
+
+.decree-intro {
+  font-family: var(--serif); font-style: italic; font-size: 15px;
+  color: var(--ink-soft); margin-bottom: 8px;
+}
+
+/* The thing you are actually deciding about. Biggest type in the card, and
+   never styled as prose. */
+.decree-cmd {
+  margin: 0 0 14px; padding: 12px 14px;
+  font-size: 13.5px; line-height: 1.5;
+  background: #fffefa; color: var(--ink);
+  border: 1px solid var(--gold-wash);
+  border-left: 3px solid var(--gold);
+  border-radius: 7px; overflow-x: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* Claude's stated reason. Sits below the command and reads as commentary,
+   so it can never be mistaken for the thing being authorised. */
+.decree-why {
+  font-family: var(--serif); font-style: italic; font-size: 13.5px;
+  color: var(--ink-soft); margin: -6px 0 14px; padding-left: 3px;
+}
+
+.decree-seals { display: flex; gap: 10px; align-items: center; }
+.seal {
+  font-family: var(--serif); font-size: 14.5px; font-weight: 600;
+  padding: 9px 20px; border-radius: 999px; border-width: 1px;
+}
+.seal-allow {
+  background: var(--heart); border-color: var(--heart-deep); color: #fff;
+  box-shadow: 0 1px 0 var(--heart-deep), 0 4px 12px -5px rgba(207,31,54,.7);
+}
+.seal-allow::before { content: "♥ "; }
+.seal-allow:hover { background: var(--heart-deep); border-color: var(--heart-deep); color: #fff; }
+.seal-deny {
+  background: #fff; border-color: var(--line); color: var(--ink-soft);
+}
+.seal-deny::before { content: "✖ "; font-size: 12px; }
+.seal-deny:hover { background: var(--card-2); border-color: var(--ink-soft); color: var(--ink); }
+
+.decree-reason { margin-top: 11px; }
+
+/* --------------------------------------------------------------- questions */
+
+.q { margin: 14px 0; }
+.q .qtext { font-family: var(--serif); font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.q label {
+  display: flex; gap: 10px; align-items: flex-start; padding: 8px 11px; cursor: pointer;
+  border: 1px solid transparent; border-radius: 9px;
+}
+.q label:hover { background: var(--alice-wash); border-color: #bcd6ef; }
+.q label input { width: auto; margin-top: 4px; accent-color: var(--alice); }
+.q .odesc { color: var(--ink-soft); font-size: 12.5px; }
+
+/* ----------------------------------------------------------------- dialog */
+
+dialog {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); color: var(--ink);
+  padding: 26px; width: min(560px, 92vw);
+  box-shadow: 0 26px 64px -18px rgba(41,38,58,.5);
+}
+dialog::backdrop { background: rgba(41,38,58,.36); backdrop-filter: blur(2px); }
+dialog h2 {
+  margin: 0 0 18px; font-family: var(--serif); font-size: 22px; font-weight: 600;
+  padding-right: 30px;
+}
+dialog h2::after {
+  content: ""; display: block; margin-top: 9px; height: 3px; width: 64px; border-radius: 3px;
+  background: repeating-linear-gradient(100deg, var(--chesh) 0 10px, var(--chesh-soft) 10px 20px);
+}
+dialog label { display: block; margin-bottom: 15px; }
+dialog label span { display: block; font-size: 12.5px; color: var(--ink-soft); margin-bottom: 6px; font-style: italic; }
+dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 0; }
+
+.dismiss {
+  position: absolute; top: 13px; right: 13px;
+  width: 30px; height: 30px; padding: 0; line-height: 1;
+  font-size: 21px; color: var(--muted);
+  border: 1px solid transparent; background: transparent; border-radius: 8px;
+}
+.dismiss:hover { background: var(--heart-wash); border-color: var(--heart); color: var(--heart); }
+#new-form { position: relative; }
+
+/* ---------------------------------------------------------------- archive */
+
+/* Alice mid-fall, for the pile you've dropped things into. Laid out like a
+   group heading so the archive doesn't read as a different kind of thing. */
+details summary {
+  cursor: pointer; color: var(--ink); font-family: var(--serif); font-style: italic;
+  font-size: 15px; margin-top: 34px; padding: 6px 0;
+  text-shadow: var(--halo);
+  display: flex; align-items: center; gap: 12px;
+  list-style: none;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: ""; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 50%;
+  background: #fff center/cover no-repeat url("/characters/archive.png");
+  border: 1px solid var(--chesh);
+  box-shadow: 0 1px 4px rgba(41,38,58,.14), inset 0 0 0 2px #fff;
+}
+details summary::after {
+  content: ""; height: 1px; flex: 1;
+  background: linear-gradient(to right, rgba(41,38,58,.28), transparent);
+}
+details[open] summary::before { opacity: .85; }
+#archive .card { opacity: .7; }
+#archive .card:hover { opacity: 1; }
+.archive-tools { justify-content: flex-end; margin: 0 0 12px; }
+button.ghost-danger { background: transparent; border-color: transparent; color: var(--muted); }
+button.ghost-danger:hover { background: var(--heart-wash); border-color: var(--heart); color: var(--heart); }
+button.ghost-danger.armed { background: var(--heart); border-color: var(--heart-deep); color: #fff; }
+
+/* ----------------------------------------------------------------- footer */
+
+footer {
+  max-width: 880px; margin: 0 auto; padding: 30px 28px 64px;
+  text-align: center; color: var(--ink-soft);
+  font-family: var(--serif); font-style: italic; font-size: 14.5px;
+  text-shadow: var(--halo);
+}
+footer::before {
+  content: "❦"; display: block; font-size: 17px; color: var(--chesh);
+  margin-bottom: 12px; font-style: normal; opacity: .75;
+}
+footer cite { font-style: normal; font-size: 12px; display: block; margin-top: 7px; opacity: .8; }
+
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: var(--paper);
+  border-radius: 999px; padding: 10px 22px;
+  font-family: var(--serif); font-style: italic; font-size: 14.5px;
+  box-shadow: 0 12px 32px -8px rgba(41,38,58,.55);
+}

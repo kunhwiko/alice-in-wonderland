@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Masthead tile: the White Rabbit's things.
+
+  Pocket watches, the little golden key, and a sprinkle of hour marks. The most
+  apt of the four for this app — the whole page is about how long something has
+  been waiting on you.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="216" height="88" viewBox="0 0 216 88">
+  <defs>
+    <g id="watch" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="0" cy="0" r="10"/>
+      <circle cx="0" cy="0" r="12.4" stroke-dasharray="1 3.4"/>
+      <path d="M0 -10v-3.4M-2.6 -13.4h5.2"/>
+      <path d="M0 0v-6M0 0l4.6 2.6"/>
+    </g>
+    <g id="key" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="0" cy="0" r="4.6"/>
+      <path d="M3.6 3.6 15.4 15.4M12 12l3-3M14.4 14.4l3-3"/>
+    </g>
+  </defs>
+
+  <g stroke="#b8902f" stroke-opacity=".26">
+    <use href="#watch" transform="translate(26 40) rotate(-8)"/>
+    <use href="#watch" transform="translate(140 52) rotate(11) scale(.8)"/>
+    <use href="#key"   transform="translate(80 22) rotate(18)  scale(.92)"/>
+    <use href="#key"   transform="translate(182 30) rotate(-24) scale(.82)"/>
+  </g>
+
+  <!-- stray hour marks, as if shaken loose from a dial -->
+  <g stroke="#a8760d" stroke-opacity=".20" stroke-width="1.8" stroke-linecap="round">
+    <path d="M64 62v4M104 66v4M120 18v4M164 70v4M200 58v4M46 14v4"/>
+  </g>
+</svg>

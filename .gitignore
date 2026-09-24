@@ -1,0 +1,9 @@
+data/
+node_modules/
+
+# Disney artwork supplied for personal local use — not redistributable
+assets/
+public/characters/*.png
+public/characters/*.bak
+public/bg-*.jpg
+.DS_Store
