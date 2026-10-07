@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Run Wonderland in the background.
+#
+#   wonderland start     start it, if it isn't already running
+#   wonderland stop      stop it
+#   wonderland restart   stop, then start — picks up code changes
+#   wonderland status    is it running, and where
+#   wonderland open      open it in the browser
+#   wonderland logs      follow the server log
+#
+# PORT picks another port (default 7777); WONDERLAND_BRIEFINGS=off and
+# WONDERLAND_BRIEF_MODEL pass through to the server as usual.
+#
+# The server is found by the port it listens on, not by a pid file, so one
+# started some other way (`npm start` in a tab) is recognised too, and there's
+# no stale pid to go wrong after a crash or a reboot.
+#
+# Install once, so `wonderland` works from anywhere:
+#   ln -s "$PWD/bin/wonderland" ~/.local/bin/wonderland
+set -euo pipefail
+
+# Resolved through the ~/.local/bin symlink to the repo itself.
+HERE="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
+PORT="${PORT:-7777}"
+URL="http://127.0.0.1:$PORT"
+LOG="$HERE/data/wonderland.log"
+
+usage() {
+  sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+die() { echo "wonderland: $*" >&2; exit 1; }
+
+# Root-owned Claude processes take ~/.claude.json with them and break the
+# login for every session you start afterwards.
+[ "$(id -u)" -ne 0 ] || die "don't run this as root — it breaks your Claude login. Run it as yourself."
+
+# pid of whatever is listening on the port, or nothing. lsof exits 1 when
+# nothing is, which pipefail would turn into a silent exit of the whole script.
+listener() {
+  { lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true; } | head -1
+}
+
+# Is that pid Wonderland, rather than something else that took the port?
+is_wonderland() {
+  ps -p "$1" -o command= 2>/dev/null | grep -q "server/index.js"
+}
+
+start() {
+  local pid
+  pid="$(listener)"
+  if [ -n "$pid" ]; then
+    is_wonderland "$pid" || die "port $PORT is taken by something else (pid $pid: $(ps -p "$pid" -o comm=)). Try PORT=7778 wonderland start"
+    echo "Already running at $URL (pid $pid)"
+    return 0
+  fi
+
+  command -v node >/dev/null || die "node isn't on your PATH"
+  if [ ! -d "$HERE/node_modules" ]; then
+    echo "Installing dependencies first…"
+    (cd "$HERE" && npm install --silent)
+  fi
+
+  mkdir -p "$HERE/data"
+  # Keep one previous log rather than growing forever.
+  if [ -f "$LOG" ] && [ "$(stat -f %z "$LOG")" -gt 5000000 ]; then
+    mv "$LOG" "$LOG.1"
+  fi
+  echo "--- started $(date '+%Y-%m-%d %H:%M:%S') ---" >>"$LOG"
+
+  # nohup and a detached stdin, so closing this terminal doesn't take it down.
+  (cd "$HERE" && nohup node server/index.js >>"$LOG" 2>&1 </dev/null &)
+
+  # Wait until it actually answers, so "running" means running.
+  for _ in $(seq 1 50); do
+    if curl -fsS -o /dev/null "$URL/api/todos" 2>/dev/null; then
+      echo "Wonderland is running at $URL (pid $(listener))"
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "wonderland: it didn't come up. Last lines of $LOG:" >&2
+  tail -n 15 "$LOG" >&2
+  exit 1
+}
+
+stop() {
+  local pid
+  pid="$(listener)"
+  if [ -z "$pid" ]; then
+    echo "Not running."
+    return 0
+  fi
+  is_wonderland "$pid" || die "port $PORT belongs to something else (pid $pid) — not stopping it"
+
+  # SIGTERM lets the server close its sessions' stdin; they come back as
+  # `interrupted` next time and resume when you send them a message.
+  kill "$pid"
+  for _ in $(seq 1 25); do
+    kill -0 "$pid" 2>/dev/null || { echo "Stopped."; return 0; }
+    sleep 0.2
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  echo "Stopped (forcibly — it didn't exit within 5s)."
+}
+
+status() {
+  local pid
+  pid="$(listener)"
+  if [ -n "$pid" ] && is_wonderland "$pid"; then
+    echo "Running at $URL (pid $pid)"
+  elif [ -n "$pid" ]; then
+    echo "Not running — port $PORT is taken by something else (pid $pid)"
+    return 1
+  else
+    echo "Not running."
+    return 1
+  fi
+}
+
+case "${1:-}" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) stop; start ;;
+  status)  status ;;
+  open)    status >/dev/null || start; open "$URL" ;;
+  logs)    [ -f "$LOG" ] || die "no log yet — it hasn't been started with \`wonderland start\`"; tail -n 50 -f "$LOG" ;;
+  ""|-h|--help|help) usage ;;
+  *) usage >&2; exit 1 ;;
+esac

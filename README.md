@@ -7,8 +7,30 @@ inline instead of cycling through terminal tabs.
 
 ```bash
 npm install
-npm start          # http://127.0.0.1:7777
+npm start          # http://127.0.0.1:7777, in the foreground
 ```
+
+Or run it in the background with `bin/wonderland`. Link it onto your PATH once:
+
+```bash
+ln -s "$PWD/bin/wonderland" ~/.local/bin/wonderland
+```
+
+then, from anywhere:
+
+```bash
+wonderland start     # in the background; returns once it's answering
+wonderland status
+wonderland open      # in the browser, starting it if need be
+wonderland logs      # follows data/wonderland.log
+wonderland restart   # after pulling or editing code
+wonderland stop
+```
+
+It finds the server by the port it's listening on, so it also recognises one
+started with `npm start`, and refuses to touch a port held by anything else.
+Never run it with `sudo`: a root-owned Claude process takes `~/.claude.json`
+with it and breaks your login everywhere else.
 
 ## Why it works this way
 
