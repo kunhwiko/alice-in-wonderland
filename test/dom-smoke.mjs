@@ -59,19 +59,27 @@ const base = { kind: "owned", cwd: "/tmp/x", name: "x", title: "t", lastText: nu
 const todos = [
   { ...base, id: "a", status: "needs-you", pending: {
       id: "r1", kind: "permission", toolName: "Bash",
-      input: { command: "rm -rf ./cache", description: "Remove the cache" }, suggestions: [] } },
+      input: { command: "rm -rf ./cache", description: "Remove the cache" }, suggestions: [] },
+    briefing: { key: "r1", status: "ready", text: "BRIEF-PENDING" } },
   { ...base, id: "b", status: "working", subagents: {
       t1: { id: "t1", type: "Explore", description: "survey the CRD tree",
             status: "running", tools: { Grep: 12, Read: 3 }, lastText: "Looking…" },
       t2: { id: "t2", type: "Plan", description: "design the migration",
             status: "done", tools: { Read: 4 }, lastText: null } } },
-  { ...base, id: "c", status: "idle" },
+  { ...base, id: "c", status: "idle",
+    briefing: { key: "turn:u1", status: "ready", text: "BRIEF-TURN" } },
   { ...base, id: "d", status: "interrupted" },
-  { ...base, id: "e", status: "failed" },
-  { ...base, id: "f", status: "stopped" },
+  // Briefings about moments that have passed: neither may be shown.
+  { ...base, id: "e", status: "failed",
+    briefing: { key: "turn:u0", status: "ready", text: "BRIEF-STALE-TURN" } },
+  { ...base, id: "f", status: "stopped",
+    briefing: { key: "r0", status: "ready", text: "BRIEF-STALE-PENDING" } },
   { ...base, id: "g", status: "gone", kind: "external" },
   { ...base, id: "h", status: "idle", closedAt: Date.now() },
   { ...base, id: "i", status: "needs-you", kind: "external", pending: null },
+  // Handed over: external, but tailed, so it shows the conversation rather
+  // than a resume command.
+  { ...base, id: "k", status: "idle", kind: "external", watching: true },
   { ...base, id: "j", status: "needs-you", pending: {
       id: "r2", kind: "question", toolName: "AskUserQuestion",
       input: { questions: [{ question: "Which?", header: "H", multiSelect: false,
@@ -105,6 +113,21 @@ if (missing.size) {
   process.exit(1);
 }
 
+// Briefings render on the collapsed card — not having to open it is the point —
+// and only for the moment the card is in now.
+for (const text of ["BRIEF-PENDING", "BRIEF-TURN"]) {
+  if (!created.some((n) => n.textContent === text)) {
+    console.error(`FAIL: current briefing ${text} not shown on the collapsed card`);
+    process.exit(1);
+  }
+}
+for (const text of ["BRIEF-STALE-TURN", "BRIEF-STALE-PENDING"]) {
+  if (created.some((n) => n.textContent === text)) {
+    console.error(`FAIL: stale briefing ${text} was shown`);
+    process.exit(1);
+  }
+}
+
 // Card bodies only render for the open card, so the decree and the question
 // form sit behind a click. Fire every card-head handler to reach them.
 const heads = created.filter((n) => n.className === "card-head" && typeof n.onclick === "function");
@@ -129,6 +152,38 @@ for (const head of heads) {
 const decrees = created.filter((n) => String(n.className).startsWith("decree"));
 if (!decrees.length) {
   console.error("FAIL: opening a pending card produced no decree — renderPermission did not run");
+  process.exit(1);
+}
+
+// A blocked card must offer a way out that isn't answering it. Both kinds
+// that block a turn — the permission decree and the question form — get one.
+const { alice } = await import(join(PUBLIC, "alice.js"));
+const escapes = created.filter((n) => n.className === "row escape");
+if (escapes.length < 2) {
+  console.error(
+    `FAIL: expected an escape row on both the decree and the question card, got ${escapes.length}`
+  );
+  process.exit(1);
+}
+if (!created.some((n) => n.textContent === alice.interrupt)) {
+  console.error("FAIL: no interrupt button rendered — nothing short of a kill can end a turn");
+  process.exit(1);
+}
+
+// Handover is the one-card alternative to forking, so it has to be reachable.
+if (!created.some((n) => n.textContent === alice.handover)) {
+  console.error("FAIL: no handover button on owned cards — forking is the only route to a terminal");
+  process.exit(1);
+}
+// A watched card must say it's being read, and must NOT offer the resume
+// command: following that would fork the session it's already following.
+if (!created.some((n) => n.textContent === alice.watched)) {
+  console.error("FAIL: a watching external card didn't render the watched branch");
+  process.exit(1);
+}
+if (created.some((n) => n.textContent === alice.externalHow) &&
+    !created.some((n) => n.textContent === alice.external)) {
+  console.error("FAIL: watched card fell through to the blind-external branch");
   process.exit(1);
 }
 
@@ -164,5 +219,6 @@ if (!/still out|helper/.test(helperBadge.textContent)) {
 
 console.log(
   `PASS: app.js ran; ${heads.length} cards, decree (${decrees.length} nodes), ` +
+  `${escapes.length} escape rows, ` +
   `${subHeadCount} subagent rows expandable, helper badge "${helperBadge.textContent}"`
 );

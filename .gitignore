@@ -7,3 +7,4 @@ public/characters/*.png
 public/characters/*.bak
 public/bg-*.jpg
 .DS_Store
+.idea/

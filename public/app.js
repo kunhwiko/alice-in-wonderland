@@ -90,6 +90,45 @@ function log(todoId, who, text) {
   logs.get(todoId).push({ who, text });
 }
 
+/**
+ * The event shapes that become log lines, and what they look like as one.
+ * Shared by the SSE stream and the replayed history so there's a single place
+ * that decides how a tool call reads.
+ */
+function logEntry(ev) {
+  if (ev.type === "message") return { who: ev.role, text: ev.text };
+  if (ev.type === "tool") return { who: "assistant", text: `→ ${ev.name}` };
+  if (ev.type === "error") return { who: "assistant", text: `error: ${ev.error}` };
+  return null;
+}
+
+/** cards we've already asked the server for history for */
+const logFetched = new Set();
+
+/**
+ * Fill a card's conversation in from the transcript on disk.
+ *
+ * Only when we have nothing for it. A card we've been watching all along
+ * already holds its recent lines from the stream, and the transcript holds
+ * those same lines — merging the two would need de-duplication, so the older
+ * history stays missing on such a card until the next reload. The case that
+ * matters is the one where we have nothing: a fresh page, or a card handed to
+ * a terminal whose frames were never streamed here at all.
+ */
+async function ensureLog(todo) {
+  if (!todo.sessionId || logFetched.has(todo.id)) return;
+  if (logs.get(todo.id)?.length) return;
+  logFetched.add(todo.id);
+
+  const { ok, data } = await api(`/api/todos/${todo.id}/log`);
+  if (!ok || !data.events?.length) return;
+
+  const history = data.events.map(logEntry).filter(Boolean);
+  // Anything that streamed in while we were fetching came after this history.
+  logs.set(todo.id, [...history, ...(logs.get(todo.id) ?? [])]);
+  render();
+}
+
 /* ------------------------------------------------------------- pending UI */
 
 const HEADLINE_KEYS = ["command", "file_path", "url", "pattern"];
@@ -150,6 +189,11 @@ function renderPermission(todo) {
 
   decree.append(el("div", { className: "decree-seals" }, allow, deny));
   decree.append(reason);
+  // Both seals let the turn carry on, so without this row the only way out of
+  // a session you'd changed your mind about was to answer it first.
+  decree.append(
+    el("div", { className: "row escape" }, interruptButton(todo), stopButton(todo))
+  );
   return decree;
 }
 
@@ -200,6 +244,8 @@ function renderQuestions(todo) {
     });
   };
   wrap.append(el("div", { className: "row" }, go));
+  // A question blocks the turn exactly as a permission does — same way out.
+  wrap.append(el("div", { className: "row escape" }, interruptButton(todo), stopButton(todo)));
   return wrap;
 }
 
@@ -268,6 +314,62 @@ function renderSubagents(subs) {
   return wrap;
 }
 
+/** The conversation so far, as the SSE stream has delivered it. */
+function renderLog(todo) {
+  const entries = logs.get(todo.id) ?? [];
+  if (!entries.length) return null;
+  const logBox = el("div", { className: "log" });
+  for (const e of entries) {
+    logBox.append(
+      el("div", { className: `msg ${e.who}` },
+        el("div", { className: "who", textContent: e.who }),
+        el("div", { className: "text", textContent: e.text })
+      )
+    );
+  }
+  queueMicrotask(() => { logBox.scrollTop = logBox.scrollHeight; });
+  return logBox;
+}
+
+/**
+ * Alice's briefing, if it's about the moment the card is in now. A pending
+ * request carries its own id; a finished turn is current only while the card
+ * is idle. Anything else is a briefing about a moment that has passed.
+ */
+function currentBriefing(todo) {
+  const b = todo.briefing;
+  if (!b || todo.kind !== "owned") return null;
+  if (todo.pending) return b.key === todo.pending.id ? b : null;
+  return todo.status === "idle" && b.key.startsWith("turn:") ? b : null;
+}
+
+/**
+ * Shown on the card even when it's collapsed — not having to open each one is
+ * the point. Plain text, never markup: what she says is drawn from the
+ * session.
+ */
+function renderBriefing(todo) {
+  const b = currentBriefing(todo);
+  if (!b) return null;
+  const box = el("div", { className: `briefing ${b.status}` });
+  if (b.status === "reading") {
+    box.append(el("div", { className: "briefing-text", textContent: alice.briefingReading }));
+    return box;
+  }
+  if (b.status === "failed") {
+    box.append(el("div", { className: "briefing-text", textContent: alice.briefingFailed, title: b.text ?? "" }));
+    return box;
+  }
+  box.append(
+    el("div", { className: "briefing-text", textContent: b.text }),
+    el("div", {
+      className: "briefing-caveat",
+      textContent: todo.pending ? alice.briefingCaveat : alice.briefingCaveatTurn,
+    })
+  );
+  return box;
+}
+
 function renderCard(todo) {
   const card = el("div", { className: `card ${todo.status}` });
   const suit = SUITS[todo.status] ?? "♠";
@@ -305,16 +407,34 @@ function renderCard(todo) {
   );
   head.onclick = () => {
     openId = openId === todo.id ? null : todo.id;
+    // Opening is the moment we know the conversation is wanted.
+    if (openId === todo.id) ensureLog(todo);
     render();
   };
   card.append(head);
   card.append(el("div", { className: "sub", textContent: todo.title ?? STATUS_COPY[todo.status] ?? "" }));
+  const briefing = renderBriefing(todo);
+  if (briefing) card.append(briefing);
 
   if (openId !== todo.id) return card;
 
   const body = el("div", { className: "body" });
 
   if (todo.kind === "external") {
+    // A handed-over card is external too, but it isn't blind: transcript.js is
+    // tailing it, so the conversation keeps arriving. Read-only either way.
+    if (todo.watching) {
+      body.append(el("div", { className: "sub", textContent: alice.watched }));
+      const log = renderLog(todo);
+      if (log) {
+        body.append(el("div", { className: "field-label", textContent: alice.watchedLog }));
+        body.append(log);
+      }
+      body.append(el("div", { className: "row" }, terminalButton(todo), closeButton(todo), stopButton(todo)));
+      card.append(body);
+      return card;
+    }
+
     body.append(el("div", { className: "sub", textContent: alice.external }));
     body.append(el("div", { className: "field-label", textContent: alice.externalHow }));
     // Built server-side: it knows whether a process still holds this
@@ -328,21 +448,8 @@ function renderCard(todo) {
     return card;
   }
 
-  // Conversation so far.
-  const entries = logs.get(todo.id) ?? [];
-  if (entries.length) {
-    const logBox = el("div", { className: "log" });
-    for (const e of entries) {
-      logBox.append(
-        el("div", { className: `msg ${e.who}` },
-          el("div", { className: "who", textContent: e.who }),
-          el("div", { className: "text", textContent: e.text })
-        )
-      );
-    }
-    body.append(logBox);
-    queueMicrotask(() => { logBox.scrollTop = logBox.scrollHeight; });
-  }
+  const log = renderLog(todo);
+  if (log) body.append(log);
 
   const subs = Object.values(todo.subagents ?? {});
   if (subs.length) body.append(renderSubagents(subs));
@@ -370,7 +477,9 @@ function renderCard(todo) {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
     };
     body.append(el("div", { className: "row" }, box));
-    body.append(el("div", { className: "row" }, send, terminalButton(todo), closeButton(todo), stopButton(todo)));
+    body.append(el("div", { className: "row" },
+      send, interruptButton(todo), terminalButton(todo), handoverButton(todo),
+      closeButton(todo), stopButton(todo)));
   }
 
   card.append(body);
@@ -409,6 +518,26 @@ function confirmButton({ label, confirmLabel, className = "danger", warn, run })
   return b;
 }
 
+/**
+ * Esc: ends the turn, keeps the session. One click, no arming — it's cheap
+ * and undoable, and making you confirm would cost you the thing you wanted,
+ * which was to stop it now.
+ */
+function interruptButton(todo) {
+  if (todo.kind !== "owned") return null;
+  if (!["working", "needs-you"].includes(todo.status)) return null;
+  const b = el("button", { className: "ghost-danger", textContent: alice.interrupt });
+  b.onclick = async (e) => {
+    e.stopPropagation();
+    b.disabled = true;
+    const { ok, data } = await api(`/api/todos/${todo.id}/interrupt`, {});
+    if (ok) toast(alice.interruptToast);
+    else if (data.reason === "not running") toast(alice.notRunning);
+    b.disabled = false;
+  };
+  return b;
+}
+
 /** Ends the process. Hidden once there's nothing left running to end. */
 function stopButton(todo) {
   if (DEAD.includes(todo.status)) return null;
@@ -437,6 +566,27 @@ function forgetButton(todo) {
     run: async () => {
       const { ok } = await api(`/api/todos/${todo.id}/delete`, {});
       if (ok) toast(alice.forgotten);
+    },
+  });
+}
+
+/**
+ * Move the session into a terminal for good, keeping this one card.
+ *
+ * Distinct from "Open in a terminal", which forks: that leaves a second
+ * session with a second id and a second card. This one lets go, so the
+ * terminal can have the original.
+ */
+function handoverButton(todo) {
+  if (todo.kind !== "owned" || !todo.sessionId) return null;
+  return confirmButton({
+    label: alice.handover,
+    confirmLabel: alice.handoverConfirm,
+    className: "ghost-danger",
+    warn: alice.handoverWarn,
+    run: async () => {
+      const { ok, data } = await api(`/api/todos/${todo.id}/handover`, {});
+      if (ok) toast(data.watching ? alice.handedOver : alice.handedOverBlind);
     },
   });
 }
@@ -498,7 +648,7 @@ function render() {
   $archiveSummary.textContent = `${alice.groupArchive} (${closed.length})`;
   $archive.replaceChildren();
   if (!closed.length) {
-    $archive.append(el("div", { className: "empty", textContent: alice.emptyArchive }));
+    $archive.append(el("div", { className: "empty empty-archive", textContent: alice.emptyArchive }));
   } else {
     $archive.append(
       el("div", { className: "row archive-tools" },
@@ -548,13 +698,11 @@ es.onmessage = (e) => {
   } else if (ev.type === "removed") {
     todos.delete(ev.id);
     logs.delete(ev.id);
+    logFetched.delete(ev.id);
     if (openId === ev.id) openId = null;
-  } else if (ev.type === "message") {
-    log(ev.todoId, ev.role, ev.text);
-  } else if (ev.type === "tool") {
-    log(ev.todoId, "assistant", `→ ${ev.name}`);
-  } else if (ev.type === "error") {
-    log(ev.todoId, "assistant", `error: ${ev.error}`);
+  } else {
+    const entry = logEntry(ev);
+    if (entry) log(ev.todoId, entry.who, entry.text);
   }
   render();
 };

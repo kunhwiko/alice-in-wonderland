@@ -11,6 +11,8 @@ const FILE = join(DATA_DIR, "todos.json");
 
 // Statuses: needs-you | working | idle | interrupted | failed | stopped | gone
 // Kinds:    owned (Wonderland drives it) | external (a terminal tab, read-only)
+// `watching` marks an external card whose transcript is being tailed — set by
+// a handover, and the reason such a card keeps the name it was given here.
 
 let state = { todos: [] };
 
@@ -63,6 +65,7 @@ export const store = {
       title: null,
       status: "working",
       pending: null,
+      watching: false,
       lastText: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),

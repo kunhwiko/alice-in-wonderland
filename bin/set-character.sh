@@ -3,7 +3,7 @@
 #
 #   bin/set-character.sh <slot> <file-or-url>
 #
-# Slots:  front  waiting  busy  rest  stopped  archive  empty
+# Slots:  front  waiting  busy  rest  stopped  archive  empty  empty-archive
 #
 #   front     masthead portrait
 #   waiting   "Waiting on you" heading
@@ -11,7 +11,8 @@
 #   rest      "Resting" heading
 #   stopped   "Quite stopped" heading
 #   archive   "Down the rabbit-hole" heading
-#   empty     the empty state, shown large
+#   empty     the empty queue state, shown large
+#   empty-archive  the empty rabbit-hole state, shown large
 #
 # Handles png/jpg/webp/gif, converts to PNG and sizes it for the slot.
 # Keeps a .bak of whatever was there, so `--restore` can put it back.
@@ -38,7 +39,7 @@ esac
 ROLE="$1"
 case "$ROLE" in
   front|waiting|busy|rest|stopped|archive) TARGET="$DIR/$ROLE.png"; SIZE=160 ;;
-  empty)                   TARGET="$DIR/empty.png"; SIZE=660 ;;
+  empty|empty-archive)     TARGET="$DIR/$ROLE.png"; SIZE=660 ;;
   *) echo "Unknown slot: $ROLE" >&2; usage ;;
 esac
 

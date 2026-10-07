@@ -58,6 +58,30 @@ const live = new Map();
 const pendingResolvers = new Map();
 /** todo ids being stopped on purpose, so drive() doesn't call it a failure */
 const stopping = new Set();
+/** todo ids being interrupted on purpose — same reason, different ending */
+const interrupting = new Set();
+/**
+ * todo ids mid-handoff: stopped here, not yet running in a terminal.
+ *
+ * For that moment the card is an owned session with no process on it, which is
+ * exactly the shape `send()` revives. Reviving it would put Wonderland's
+ * process on a transcript a terminal is about to open — the interleaving that
+ * --fork-session exists to prevent. So resume() refuses while this is set.
+ */
+const handingOver = new Set();
+
+/**
+ * Answer, with a deny, every canUseTool this todo is parked on. A blocked
+ * callback holds the turn open, so neither stop nor interrupt can land while
+ * one is outstanding.
+ */
+function releasePending(todoId, message) {
+  for (const [reqId, p] of [...pendingResolvers]) {
+    if (p.todoId !== todoId) continue;
+    pendingResolvers.delete(reqId);
+    p.resolve({ behavior: "deny", message });
+  }
+}
 
 /**
  * A name is only useful as an address if it points at one thing. Duplicates
@@ -75,7 +99,7 @@ function uniqueName(wanted) {
   }
 }
 
-export function createSessionManager({ broadcast }) {
+export function createSessionManager({ broadcast, briefer = null }) {
   function setStatus(todoId, status, extra = {}) {
     const todo = store.update(todoId, { status, ...extra });
     if (todo) broadcast({ type: "todo", todo });
@@ -97,6 +121,7 @@ export function createSessionManager({ broadcast }) {
       };
 
       setStatus(todoId, "needs-you", { pending: req });
+      briefer?.brief(todoId, { kind: "pending", pending: req });
 
       const decision = await new Promise((resolve) => {
         pendingResolvers.set(req.id, { resolve, todoId });
@@ -175,6 +200,9 @@ export function createSessionManager({ broadcast }) {
   }
 
   async function drive(todoId, q) {
+    // The turn's last words, in full — lastText on the card is clipped, and
+    // when a turn ends on a recommendation the end is the part that matters.
+    let finalText = "";
     try {
       for await (const msg of q) {
         if (msg.type === "system" && msg.subtype === "init") {
@@ -203,6 +231,7 @@ export function createSessionManager({ broadcast }) {
           }
 
           if (text.trim()) {
+            finalText = text;
             store.update(todoId, { lastText: text.slice(0, 400) });
             broadcast({ type: "message", todoId, role: "assistant", text });
           }
@@ -239,8 +268,22 @@ export function createSessionManager({ broadcast }) {
           for (const [id, sub] of Object.entries(store.get(todoId)?.subagents ?? {})) {
             if (sub.status === "running") upsertSub(todoId, id, { status: "done" });
           }
+          // An interrupted turn reports error_during_execution. That's the
+          // user pressing stop, not a failure — and because input is streamed
+          // the session lives on, so this is `idle` and not `interrupted`.
+          if (interrupting.delete(todoId)) {
+            setStatus(todoId, "idle", { pending: null });
+            finalText = "";
+            continue;
+          }
           // Turn finished. Claude is now waiting on your next message.
           setStatus(todoId, msg.subtype === "success" ? "idle" : "failed");
+          // Only a turn that came back to you on its own. One you interrupted
+          // left through the branch above — you already know why it's waiting.
+          if (msg.subtype === "success" && finalText.trim()) {
+            briefer?.brief(todoId, { kind: "turn", turn: msg.uuid ?? Date.now(), finalText });
+          }
+          finalText = "";
         }
       }
       // The generator only ends when we end it, so reaching here means shutdown.
@@ -250,6 +293,10 @@ export function createSessionManager({ broadcast }) {
       // without this check a deliberate stop reports as "failed".
       if (stopping.has(todoId)) {
         setStatus(todoId, "stopped", { pending: null });
+      } else if (interrupting.has(todoId)) {
+        // An interrupt is meant to leave the session standing, so landing
+        // here means it took the process with it. Recoverable, but by resume.
+        setStatus(todoId, "interrupted", { pending: null });
       } else {
         setStatus(todoId, "failed", { lastText: String(err?.message ?? err) });
         broadcast({ type: "error", todoId, error: String(err?.message ?? err) });
@@ -257,6 +304,7 @@ export function createSessionManager({ broadcast }) {
     } finally {
       live.delete(todoId);
       stopping.delete(todoId);
+      interrupting.delete(todoId);
     }
   }
 
@@ -282,6 +330,7 @@ export function createSessionManager({ broadcast }) {
     resume({ todoId, text }) {
       const todo = store.get(todoId);
       if (!todo || todo.kind !== "owned" || !todo.sessionId) return null;
+      if (handingOver.has(todoId)) return null;
 
       launch(todo, text, { resume: todo.sessionId });
       setStatus(todo.id, "working");
@@ -309,6 +358,27 @@ export function createSessionManager({ broadcast }) {
     },
 
     /**
+     * The terminal's Esc: end the turn and leave the session standing. stdin
+     * stays open, so the process survives and the next message continues in
+     * it. drive() turns the aborted turn's result into `idle`.
+     */
+    async interrupt(todoId) {
+      const entry = live.get(todoId);
+      if (!entry) return { ok: false, reason: "not running" };
+
+      interrupting.add(todoId);
+      releasePending(todoId, "The user interrupted before this could run.");
+
+      try {
+        await entry.q.interrupt();
+      } catch (err) {
+        interrupting.delete(todoId);
+        return { ok: false, reason: String(err?.message ?? err) };
+      }
+      return { ok: true };
+    },
+
+    /**
      * Stop an owned session for good: interrupt the turn, then close stdin so
      * the child process exits. The transcript survives, so the session can
      * still be resumed later by id — this ends the process, not the history.
@@ -318,13 +388,7 @@ export function createSessionManager({ broadcast }) {
       if (!entry) return { ok: false, reason: "not running" };
 
       stopping.add(todoId);
-
-      // A blocked canUseTool would keep the turn alive through the interrupt.
-      for (const [reqId, p] of [...pendingResolvers]) {
-        if (p.todoId !== todoId) continue;
-        pendingResolvers.delete(reqId);
-        p.resolve({ behavior: "deny", message: "The user stopped this session." });
-      }
+      releasePending(todoId, "The user stopped this session.");
 
       try {
         await entry.q.interrupt();
@@ -341,6 +405,19 @@ export function createSessionManager({ broadcast }) {
 
     isLive(todoId) {
       return live.has(todoId);
+    },
+
+    /**
+     * Close the window between "Wonderland let go" and "the terminal took
+     * hold". Held by the handover route across the stop and the AppleScript,
+     * and released either way — on success the card is `external` by then,
+     * which refuses a resume on its own.
+     */
+    latchForHandover(todoId) {
+      handingOver.add(todoId);
+    },
+    releaseHandover(todoId) {
+      handingOver.delete(todoId);
     },
 
     shutdown() {

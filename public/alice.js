@@ -1,8 +1,9 @@
 // Everything Alice says lives here, so her tone is tunable in one place.
 //
-// She narrates the chrome only — headers, empty states, buttons, confirmations.
-// She never paraphrases Claude's output, and never restates a command: tool
-// names, commands and diffs render verbatim, in monospace, elsewhere.
+// She narrates the chrome — headers, empty states, buttons, confirmations.
+// The one place she speaks about a session is her briefing (server/briefing.js),
+// and that sits above the literal request, never in place of it: tool names,
+// commands and diffs still render verbatim, in monospace.
 export const alice = {
   title: "Alice in Wonderland",
   tagline: "Alice is minding your sessions.",
@@ -33,6 +34,13 @@ export const alice = {
   failed: "Something went dreadfully wrong.",
   gone: "It's wandered off entirely.",
 
+  briefingReading: "Let me have a look at what it's been up to…",
+  briefingFailed: "I couldn't make sense of that one — you'll have to read it yourself.",
+  // Under every briefing. She read things the session read, and anyone could
+  // have written those — so she can be wrong, or be told to be.
+  briefingCaveat: "That's only my reading of it — the request itself is what you're deciding.",
+  briefingCaveatTurn: "That's only my reading of it — its own words are in the log.",
+
   askAllow: "May it?",
   decreeRun: "It wishes to run —",
   decreeDo: "It wishes to —",
@@ -53,6 +61,13 @@ export const alice = {
   emptied: (n) => `${n} gone, as if they never were.`,
   transcriptKept: "The conversation itself stays on disk.",
 
+  // Interrupt and stop are deliberately unalike: one is a tap on the shoulder,
+  // the other is the Queen. Nothing about "Off with its head!" should suggest
+  // you can pick the head back up.
+  interrupt: "That will do",
+  // Not `interrupted` — that one is the status copy for a session we lost.
+  interruptToast: "Stopped where it stood. Say something and it carries on.",
+
   stop: "Off with its head!",
   stopConfirm: "Quite sure?",
   stopped: "And that was the end of it.",
@@ -66,6 +81,16 @@ export const alice = {
   external: "That one's off in the looking-glass — I can't reach it from here.",
   externalHow: "Open it in a terminal instead:",
   copied: "Copied!",
+
+  handover: "Hand it to a terminal",
+  handoverConfirm: "Quite sure?",
+  handoverWarn: "I'll let go of it first — anything it's in the middle of is lost.",
+  handedOver: "It's yours now. I'll watch from here.",
+  // Said when the handoff worked but the transcript couldn't be found: the
+  // session is fine, the card just can't show the conversation.
+  handedOverBlind: "It's yours now, but I can't find its transcript to read along.",
+  watched: "It's in a terminal now. I'm reading along, but I can't put a word in.",
+  watchedLog: "What it's said since I let go",
 
   newSession: "Shall we begin?",
   newSessionName: "What shall I call it? (optional — I'll name it after the folder)",

@@ -8,8 +8,13 @@ import { extname, join, dirname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { store } from "./store.js";
 import { createSessionManager } from "./sessions.js";
-import { ingestHook, pollAgents, stopExternal } from "./external.js";
+import { createBriefer } from "./briefing.js";
+import {
+  ingestHook, pollAgents, stopExternal,
+  startWatching, stopWatching, stopAllWatching, resumeWatching,
+} from "./external.js";
 import { openInTerminal, resumeCommandFor } from "./terminal.js";
+import { findTranscript, readEvents } from "./transcript.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, "public");
@@ -25,7 +30,8 @@ function broadcast(event) {
   for (const res of clients) res.write(frame);
 }
 
-const sessions = createSessionManager({ broadcast });
+const briefer = createBriefer({ broadcast });
+const sessions = createSessionManager({ broadcast, briefer });
 
 /* ------------------------------------------------------------------ utils */
 
@@ -152,6 +158,29 @@ const server = createServer(async (req, res) => {
       return json(res, ok ? 200 : 409, ok ? { ok: true } : { error: "no longer pending" });
     }
 
+    // --- the conversation so far, from the transcript on disk ---------------
+    //
+    // The browser keeps its log in memory, so a reload loses it. Fetched per
+    // card on opening rather than pushed to every client on connect: most
+    // cards are never opened, and some transcripts run to megabytes.
+    m = path.match(/^\/api\/todos\/([^/]+)\/log$/);
+    if (m && method === "GET") {
+      const todo = store.get(m[1]);
+      if (!todo) return json(res, 404, { error: "no such todo" });
+      const file = todo.sessionId ? findTranscript(todo.sessionId) : null;
+      // No transcript is not an error — a session may not have written one yet.
+      if (!file) return json(res, 200, { events: [] });
+
+      // Re-shaped into the events the SSE hub broadcasts, so the client turns
+      // history and live frames into log lines with the same one converter.
+      const events = readEvents(file, { limit: 200 }).map((e) =>
+        e.kind === "tool"
+          ? { type: "tool", todoId: todo.id, name: e.name, input: e.input }
+          : { type: "message", todoId: todo.id, role: e.role, text: e.text }
+      );
+      return json(res, 200, { events });
+    }
+
     // --- per-todo actions ---------------------------------------------------
     m = path.match(/^\/api\/todos\/([^/]+)\/([a-z]+)$/);
     if (m && method === "POST") {
@@ -169,6 +198,19 @@ const server = createServer(async (req, res) => {
         return json(res, ok ? 200 : 409, ok ? { ok: true } : { error: "could not resume" });
       }
 
+      // Esc, not death. Owned only — there's no IPC into a terminal tab, and
+      // signalling one would kill it rather than interrupt it.
+      if (action === "interrupt") {
+        if (todo.kind !== "owned") {
+          return json(res, 409, { error: "external sessions can't be interrupted" });
+        }
+        // No status update here on purpose: drive() sets it when the
+        // aborted turn's result frame arrives, and it is the one that knows
+        // whether the session survived.
+        const result = await sessions.interrupt(id);
+        return json(res, result.ok ? 200 : 409, result);
+      }
+
       if (action === "stop") {
         const result =
           todo.kind === "owned"
@@ -176,7 +218,9 @@ const server = createServer(async (req, res) => {
             : await stopExternal(todo);
 
         if (result.ok) {
-          const t = store.update(id, { status: "stopped", pending: null });
+          // Nothing will be appended to that transcript again.
+          stopWatching(id);
+          const t = store.update(id, { status: "stopped", pending: null, watching: false });
           broadcast({ type: "todo", todo: t });
         }
         return json(res, result.ok ? 200 : 409, result);
@@ -187,10 +231,62 @@ const server = createServer(async (req, res) => {
         return json(res, result.ok ? 200 : 409, result);
       }
 
+      // --- hand the session to a terminal, keeping the one card -------------
+      //
+      // Not a fork. Wonderland lets go of the session entirely, the terminal
+      // resumes that same id, and the card stays put and watches the
+      // transcript. One id, one history, one card.
+      if (action === "handover") {
+        if (todo.kind !== "owned") {
+          return json(res, 409, { error: "that one's already in a terminal" });
+        }
+        if (!todo.sessionId) {
+          return json(res, 409, { error: "that session has no id to resume" });
+        }
+
+        // Held across both steps below: between the stop and the terminal
+        // taking hold, this is an owned card with no process, which is exactly
+        // what send() revives. See sessions.js.
+        sessions.latchForHandover(id);
+        try {
+          if (sessions.isLive(id)) await sessions.stop(id);
+
+          // Re-read: stop() moved the status, and openInTerminal decides
+          // whether to fork from it. Nothing holds the transcript now, so it
+          // builds a plain --resume.
+          const stopped = store.get(id);
+          const opened = await openInTerminal(stopped, { ownedIsLive: false });
+          if (!opened.ok) {
+            // The session is already stopped, so the turn is lost either way,
+            // but the card stays owned and can be revived from here.
+            return json(res, 409, { error: opened.reason });
+          }
+          if (opened.forked) {
+            // Belt and braces: a fork here would mean the liveness check
+            // disagreed with us and we'd be creating the second card again.
+            return json(res, 500, { error: "refused: that would have forked the session" });
+          }
+
+          // handedOverAt/seenInTerminal are what let pollAgents tell "the tab
+          // hasn't opened yet" from "the tab has closed" — see external.js.
+          const t = store.update(id, {
+            kind: "external", status: "idle", pending: null,
+            watching: true, handedOverAt: Date.now(), seenInTerminal: false,
+          });
+          const watch = startWatching(t, broadcast);
+          const final = watch.ok ? t : store.update(id, { watching: false });
+          broadcast({ type: "todo", todo: final });
+          return json(res, 200, { ok: true, watching: watch.ok, reason: watch.reason, app: opened.app });
+        } finally {
+          sessions.releaseHandover(id);
+        }
+      }
+
       if (action === "delete") {
         // A card can be deleted while its session is still running, so stop
         // it first rather than orphaning the process.
         if (todo.kind === "owned" && sessions.isLive(id)) await sessions.stop(id);
+        stopWatching(id);
         store.remove(id);
         broadcast({ type: "removed", id });
         return json(res, 200, { ok: true });
@@ -225,9 +321,14 @@ server.listen(PORT, HOST, () => {
 const poller = setInterval(() => pollAgents(broadcast).catch(() => {}), 5_000);
 pollAgents(broadcast).catch(() => {});
 
+// A handed-over session carries on in its terminal across a restart of this
+// process, so the cards that were following one pick the thread back up.
+resumeWatching(broadcast);
+
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     clearInterval(poller);
+    stopAllWatching();
     sessions.shutdown();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();

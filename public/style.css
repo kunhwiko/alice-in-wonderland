@@ -203,7 +203,8 @@ main { max-width: 880px; margin: 0 auto; padding: 26px 28px 40px; }
   box-shadow: 0 1px 0 var(--heart-deep);
 }
 
-/* shown only when the queue is completely clear */
+/* shown only when the queue is completely clear (see also .empty-archive,
+   which is the same plate with Alice peering down an empty hole instead) */
 .empty {
   color: var(--ink); font-family: var(--serif); font-style: italic; font-size: 16.5px;
   padding: 26px 4px 48px; text-align: center;
@@ -305,6 +306,19 @@ main { max-width: 880px; margin: 0 auto; padding: 26px 28px 40px; }
 .badge.helpers.running { border-color: var(--alice); color: var(--alice-deep); background: var(--alice-wash); }
 
 .sub { color: var(--ink-soft); font-size: 13.5px; margin-top: 6px; font-family: var(--serif); }
+
+/* Alice's briefing. Her voice, so serif and her blue — set apart from the
+   monospace that marks Claude's literal words, so the two can't be confused. */
+.briefing {
+  margin-top: 10px; padding: 9px 12px; border-radius: 9px;
+  background: var(--alice-wash); border-left: 3px solid var(--alice);
+  font-family: var(--serif); color: var(--ink);
+}
+.briefing-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+.briefing.reading .briefing-text { color: var(--ink-soft); font-style: italic; }
+.briefing.failed { background: var(--card-2); border-left-color: var(--muted); }
+.briefing.failed .briefing-text { color: var(--ink-soft); font-style: italic; }
+.briefing-caveat { margin-top: 5px; font-size: 11.5px; color: var(--muted); font-style: italic; }
 .body { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 14px; }
 
 /* Claude's literal words and commands — plain, scannable, never decorated. */
@@ -491,6 +505,14 @@ input:focus, textarea:focus, select:focus {
 
 .decree-reason { margin-top: 11px; }
 
+/* The way out of a decree, set below a rule and in small quiet type: it must
+   be findable without ever competing with the two seals for the eye. */
+.row.escape {
+  margin-top: 13px; padding-top: 10px; border-top: 1px solid var(--line);
+  gap: 4px;
+}
+.row.escape button { font-size: 12.5px; padding: 5px 10px; }
+
 /* --------------------------------------------------------------- questions */
 
 .q { margin: 14px 0; }
@@ -556,6 +578,11 @@ details summary::after {
   background: linear-gradient(to right, rgba(41,38,58,.28), transparent);
 }
 details[open] summary::before { opacity: .85; }
+/* Nothing dropped down the hole yet — Alice peers into it, rather than
+   reusing the "nobody needs me" plate the empty queue shows. */
+.empty-archive::before {
+  background-image: url("/characters/empty-archive.png");
+}
 #archive .card { opacity: .7; }
 #archive .card:hover { opacity: 1; }
 .archive-tools { justify-content: flex-end; margin: 0 0 12px; }
