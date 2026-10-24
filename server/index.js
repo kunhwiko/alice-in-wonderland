@@ -15,9 +15,12 @@ import {
 } from "./external.js";
 import { openInTerminal, resumeCommandFor } from "./terminal.js";
 import { findTranscript, readEvents } from "./transcript.js";
+import { createSlackWatcher } from "./slack.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, "public");
+// three.js, served straight from node_modules: still no build step, and no CDN.
+const VENDOR = { "/vendor/three/": join(ROOT, "node_modules", "three") };
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT ?? 7777);
 
@@ -25,13 +28,26 @@ const PORT = Number(process.env.PORT ?? 7777);
 
 const clients = new Set();
 
+/**
+ * A todo as the browser gets it: with the resume command built here, because
+ * only the server knows whether a process still holds the transcript, and so
+ * whether the command needs --fork-session. Attached to every todo that goes
+ * out, not just the first load — a card that has changed since is the one
+ * most likely to have changed liveness.
+ */
+function present(todo) {
+  return { ...todo, resumeCommand: resumeCommandFor(todo, { ownedIsLive: sessions.isLive(todo.id) }) };
+}
+
 function broadcast(event) {
-  const frame = `data: ${JSON.stringify(event)}\n\n`;
+  const out = event.type === "todo" ? { ...event, todo: present(event.todo) } : event;
+  const frame = `data: ${JSON.stringify(out)}\n\n`;
   for (const res of clients) res.write(frame);
 }
 
 const briefer = createBriefer({ broadcast });
 const sessions = createSessionManager({ broadcast, briefer });
+const slack = createSlackWatcher({ broadcast });
 
 /* ------------------------------------------------------------------ utils */
 
@@ -73,9 +89,16 @@ async function readBody(req) {
 }
 
 async function serveStatic(res, urlPath) {
-  const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
-  const file = normalize(join(PUBLIC, rel));
-  if (!file.startsWith(PUBLIC)) return json(res, 403, { error: "nope" });
+  let base = PUBLIC;
+  let rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
+  for (const [prefix, dir] of Object.entries(VENDOR)) {
+    if (urlPath.startsWith(prefix)) {
+      base = dir;
+      rel = urlPath.slice(prefix.length);
+    }
+  }
+  const file = normalize(join(base, rel));
+  if (!file.startsWith(base)) return json(res, 403, { error: "nope" });
   try {
     const buf = await readFile(file);
     res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
@@ -100,7 +123,9 @@ const server = createServer(async (req, res) => {
         "cache-control": "no-cache",
         connection: "keep-alive",
       });
-      res.write(`data: ${JSON.stringify({ type: "hello", todos: store.all() })}\n\n`);
+      // Everything the page needs to draw itself, so it needs no fetch of its own.
+      const hello = { type: "hello", todos: store.all().map(present), slack: slack.snapshot() };
+      res.write(`data: ${JSON.stringify(hello)}\n\n`);
       clients.add(res);
       const keepAlive = setInterval(() => res.write(": ping\n\n"), 25_000);
       req.on("close", () => {
@@ -110,15 +135,10 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // For looking at the state from a terminal: the page itself gets all of
+    // this from the event stream's hello. Likewise GET /api/slack below.
     if (path === "/api/todos" && method === "GET") {
-      return json(res, 200, {
-        todos: store.all().map((t) => ({
-          ...t,
-          // The client used to build this string itself and omitted
-          // --fork-session, which is exactly wrong for a live terminal tab.
-          resumeCommand: resumeCommandFor(t, { ownedIsLive: sessions.isLive(t.id) }),
-        })),
-      });
+      return json(res, 200, { todos: store.all().map(present) });
     }
 
     if (path === "/api/sessions" && method === "POST") {
@@ -126,6 +146,22 @@ const server = createServer(async (req, res) => {
       if (!cwd || !prompt) return json(res, 400, { error: "cwd and prompt are required" });
       const todo = sessions.start({ cwd, prompt, name, model });
       return json(res, 200, { todo });
+    }
+
+    // --- the Tea Party: Slack conversations waiting on you -----------------
+    if (path === "/api/slack" && method === "GET") {
+      return json(res, 200, slack.snapshot());
+    }
+    if (path === "/api/slack/check" && method === "POST") {
+      // Answers at once; the result arrives over SSE like everything else.
+      slack.check();
+      return json(res, 200, { ok: true });
+    }
+    const done = path.match(/^\/api\/slack\/([0-9a-f]+)\/done$/);
+    if (done && method === "POST") {
+      return slack.done(done[1])
+        ? json(res, 200, { ok: true })
+        : json(res, 404, { error: "no such conversation" });
     }
 
     // --- empty the archive in one go ---------------------------------------
@@ -292,6 +328,16 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { ok: true });
       }
 
+      // "Noted": a finished turn you've read and have nothing to say to. It
+      // leaves Alice's desk; the card stays where it is.
+      if (action === "ack") {
+        const { turn } = await readBody(req);
+        if (!turn) return json(res, 400, { error: "turn is required" });
+        const t = store.update(id, { ackedTurn: turn });
+        broadcast({ type: "todo", todo: t });
+        return json(res, 200, { todo: t });
+      }
+
       if (action === "close") {
         const t = store.close(id);
         broadcast({ type: "todo", todo: t });
@@ -325,9 +371,12 @@ pollAgents(broadcast).catch(() => {});
 // process, so the cards that were following one pick the thread back up.
 resumeWatching(broadcast);
 
+slack.start();
+
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     clearInterval(poller);
+    slack.stop();
     stopAllWatching();
     sessions.shutdown();
     server.close(() => process.exit(0));

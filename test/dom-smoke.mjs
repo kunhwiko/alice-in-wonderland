@@ -1,11 +1,15 @@
-// Executes public/app.js against a minimal DOM stub.
+// Executes public/app.js — and the Court and Tea Party panels it pulls in —
+// against a minimal DOM stub.
 //
 // `node --check` only parses — it won't catch a temporal-dead-zone reference,
 // a missing element id, or anything else that throws at module load. Those
-// break the entire page silently, so run this after editing app.js:
+// break the entire page silently, so run this after editing the client:
 //
 //   npm test
-import { mkdtemp, copyFile, writeFile, readFile, rm } from "node:fs/promises";
+//
+// world.js is swapped for a stand-in that records what it's told: there's no
+// WebGL here, and what matters is that app.js sends Alice on the right errands.
+import { mkdtemp, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +26,7 @@ const mk = () => {
     style: {}, dataset: {}, onclick: null, onchange: null, onkeydown: null, onsubmit: null,
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
     append() {}, replaceChildren() {}, remove() {},
-    addEventListener() {}, removeEventListener() {},
+    addEventListener() {}, removeEventListener() {}, setAttribute() {},
     showModal() {}, close() {}, reset() {}, querySelector: () => mk(),
     cwd: { value: "" }, prompt: { value: "" }, sessionName: { value: "" }, sessionModel: { value: "" },
   };
@@ -32,8 +36,10 @@ const mk = () => {
 
 const ids = [
   "tagline", "new-btn", "new-go", "new-where-label", "new-what-label",
-  "footer", "queue", "archive", "archive-summary", "new-dialog", "new-form",
-  "new-dismiss", "favicon", "portrait", "new-name-label", "new-model-label", "new-model", "title",
+  "footer", "desk", "queue", "archive", "archive-summary", "new-dialog", "new-form",
+  "new-dismiss", "favicon", "new-name-label", "new-model-label", "new-model", "title",
+  "world", "overlay", "no-world", "go-tea", "go-court", "panel", "panel-title", "panel-hint",
+  "panel-close", "tea", "court", "tea-status", "tea-list", "panel-expand", "panel-grip",
 ];
 const nodes = Object.fromEntries(ids.map((i) => [i, mk()]));
 const missing = new Set();
@@ -47,10 +53,16 @@ globalThis.document = {
   addEventListener() {},
   // A full stub node: app.js touches body.classList and body.dataset.
   body: { ...mk(), dataset: {} },
+  documentElement: { style: { setProperty() {} } },
   title: "",
 };
-globalThis.localStorage = { getItem: () => null, setItem() {} };
-globalThis.EventSource = class { set onmessage(_) {} };
+// The panel sizes itself to the window.
+globalThis.innerWidth = 1440;
+globalThis.addEventListener = () => {};
+// Kept, so the test can play events into the page as the server would.
+let sse = null;
+globalThis.EventSource = class { set onmessage(f) { sse = f; } };
+const send = (ev) => sse({ data: JSON.stringify(ev) });
 
 // One todo per status, so every branch of renderCard runs: each pip, each
 // group, the archive row, and the buttons attached to all of them.
@@ -66,8 +78,12 @@ const todos = [
             status: "running", tools: { Grep: 12, Read: 3 }, lastText: "Looking…" },
       t2: { id: "t2", type: "Plan", description: "design the migration",
             status: "done", tools: { Read: 4 }, lastText: null } } },
-  { ...base, id: "c", status: "idle",
+  { ...base, id: "c", status: "idle", lastText: "I recommend raising the timeout.",
+    lastTurn: { id: "u1", at: Date.now() - 120_000 },
     briefing: { key: "turn:u1", status: "ready", text: "BRIEF-TURN" } },
+  // A finished turn you've already marked "Noted": off the desk.
+  { ...base, id: "m", status: "idle", lastTurn: { id: "u2", at: Date.now() }, ackedTurn: "u2",
+    briefing: { key: "turn:u2", status: "ready", text: "BRIEF-NOTED" } },
   { ...base, id: "d", status: "interrupted" },
   // Briefings about moments that have passed: neither may be shown.
   { ...base, id: "e", status: "failed",
@@ -86,23 +102,53 @@ const todos = [
         options: [{ label: "One", description: "d" }, { label: "Two", description: "d" }] }] },
       suggestions: [] } },
 ];
-globalThis.fetch = async () => ({ ok: true, json: async () => ({ todos }) });
-globalThis.HTMLInputElement = class {};
-globalThis.HTMLTextAreaElement = class {};
+// Slack: one conversation wanting a review, one that's only a thank-you.
+// One timestamp for all: the same letter twice must be the same news.
+const NOW_TS = String(Math.floor(Date.now() / 1000));
+const slackItem = (id, needsYou, extra = {}) => ({
+  id, key: `dm:D1:${id}`, kind: "dm", channelId: "D1", channelName: null, threadTs: null,
+  people: ["Nishant"], from: "Nishant", messages: [{ from: "Nishant", text: `TEXT-${id}`, ts: "1" }],
+  latestTs: NOW_TS, permalink: "https://slack.example/x",
+  summary: `SUMMARY-${id}`, needsYou, triaged: true, ...extra,
+});
+const slack = {
+  enabled: true, checking: false, checkedAt: Date.now(), error: null,
+  items: [slackItem("aaa", true), slackItem("bbb", false)],
+};
+// The page draws from the event stream alone; fetch is only for actions.
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
 globalThis.queueMicrotask = (f) => f();
+// The desk ticks its "waiting 4m" labels on an interval, which would keep
+// this process alive forever after the checks finish.
+globalThis.setInterval = () => 0;
 // Node 22 defines a getter-only `navigator`, so assignment throws.
 Object.defineProperty(globalThis, "navigator", {
   value: { clipboard: { writeText: async () => {} } },
   configurable: true,
 });
 
-// app.js imports "/alice.js", an absolute URL only the browser resolves.
-// Stage both files side by side and rewrite that one specifier.
+// The stand-in world: records errands and updates, draws nothing.
+const world = { errands: [], updates: [], focused: [] };
+globalThis.__world = world;
+const STUB_WORLD = `export function createWorld() {
+  const w = globalThis.__world;
+  return {
+    update: (s) => w.updates.push(s),
+    errand: (district, text) => w.errands.push({ district, text }),
+    focus: (k) => w.focused.push(k),
+  };
+}`;
+
+// The modules import each other by absolute URL ("/alice.js"), which only the
+// browser resolves. Stage them side by side and make those relative.
 const dir = await mkdtemp(join(tmpdir(), "wonderland-smoke-"));
 try {
-  await copyFile(join(PUBLIC, "alice.js"), join(dir, "alice.js"));
-  const src = await readFile(join(PUBLIC, "app.js"), "utf8");
-  await writeFile(join(dir, "app.js"), src.replace('from "/alice.js"', 'from "./alice.js"'));
+  for (const f of (await readdir(PUBLIC)).filter((f) => f.endsWith(".js"))) {
+    if (f === "world.js" || f === "alice-figure.js") continue;
+    const src = await readFile(join(PUBLIC, f), "utf8");
+    await writeFile(join(dir, f), src.replace(/(from |import\()"\/([\w-]+\.js)"/g, '$1"./$2"'));
+  }
+  await writeFile(join(dir, "world.js"), STUB_WORLD);
   await import(join(dir, "app.js"));
 } finally {
   await rm(dir, { recursive: true, force: true });
@@ -113,11 +159,29 @@ if (missing.size) {
   process.exit(1);
 }
 
-// Briefings render on the collapsed card — not having to open it is the point —
-// and only for the moment the card is in now.
-for (const text of ["BRIEF-PENDING", "BRIEF-TURN"]) {
-  if (!created.some((n) => n.textContent === text)) {
-    console.error(`FAIL: current briefing ${text} not shown on the collapsed card`);
+const { alice } = await import(join(PUBLIC, "alice.js"));
+
+// Before the hello the page knows of nothing, so it mustn't take its
+// baseline yet: if it did, everything already waiting would arrive as news.
+if (world.errands.length) {
+  console.error(`FAIL: Alice set off before the server said hello: ${JSON.stringify(world.errands)}`);
+  process.exit(1);
+}
+
+// The hello is everything the page has to draw from. It's the baseline:
+// nothing in it is news, but Alice starts the day at the oldest thing waiting.
+send({ type: "hello", todos, slack });
+if (world.errands.length !== 1 || world.errands[0].text !== alice.errandStart) {
+  console.error(`FAIL: the hello should send Alice to the oldest thing waiting, once; got ${JSON.stringify(world.errands)}`);
+  process.exit(1);
+}
+
+// A briefing shows once: on the desk while the card is there, on the card
+// once it's left (here, a turn marked Noted).
+for (const text of ["BRIEF-PENDING", "BRIEF-TURN", "BRIEF-NOTED"]) {
+  const n = created.filter((x) => x.textContent === text).length;
+  if (n !== 1) {
+    console.error(`FAIL: briefing ${text} rendered ${n} times on first paint, expected exactly once`);
     process.exit(1);
   }
 }
@@ -126,6 +190,33 @@ for (const text of ["BRIEF-STALE-TURN", "BRIEF-STALE-PENDING"]) {
     console.error(`FAIL: stale briefing ${text} was shown`);
     process.exit(1);
   }
+}
+
+// Alice's desk: the permission (a), the question (j) and the finished turn (c)
+// — owned sessions waiting on you. Not the external one (i), and not the turn
+// already marked Noted (m).
+const deskItems = created.filter((n) => String(n.className).startsWith("desk-item"));
+const kinds = deskItems.map((n) => n.className.replace("desk-item desk-", "")).sort();
+if (JSON.stringify(kinds) !== JSON.stringify(["permission", "question", "turn"])) {
+  console.error(`FAIL: desk should hold one permission, one question and one turn; got ${JSON.stringify(kinds)}`);
+  process.exit(1);
+}
+// A finished turn keeps the desk short — its words are on the card, not
+// repeated here — and has a way to dismiss it.
+if (created.some((n) => n.className === "desk-words")) {
+  console.error("FAIL: the desk repeated a finished turn's last words; they belong on the card");
+  process.exit(1);
+}
+if (!created.some((n) => n.textContent === alice.noted)) {
+  console.error("FAIL: a finished turn on the desk has no Noted button");
+  process.exit(1);
+}
+// The desk and the open card each draw the question; sharing radio names
+// would let one steal the other's selection.
+const radioNames = new Set(created.filter((n) => n.type === "radio").map((n) => n.name));
+if (![...radioNames].some((n) => n.startsWith("desk-"))) {
+  console.error("FAIL: desk radios aren't namespaced away from the card's");
+  process.exit(1);
 }
 
 // Card bodies only render for the open card, so the decree and the question
@@ -157,7 +248,6 @@ if (!decrees.length) {
 
 // A blocked card must offer a way out that isn't answering it. Both kinds
 // that block a turn — the permission decree and the question form — get one.
-const { alice } = await import(join(PUBLIC, "alice.js"));
 const escapes = created.filter((n) => n.className === "row escape");
 if (escapes.length < 2) {
   console.error(
@@ -216,6 +306,76 @@ if (!/still out|helper/.test(helperBadge.textContent)) {
   console.error(`FAIL: helper badge text looks wrong: ${helperBadge.textContent}`);
   process.exit(1);
 }
+
+// Typing must survive a re-render: other sessions redraw the page all the time.
+// Last, because the redraw creates fresh card heads the checks above count.
+const reasonKey = "desk:r1:reason";
+const reason = created.filter((n) => n.dataset?.draft === reasonKey).at(-1);
+if (!reason) {
+  console.error("FAIL: the desk's deny-reason box isn't a draft box");
+  process.exit(1);
+}
+reason.value = "use the retry helper instead";
+reason.oninput();
+created.find((n) => n.className === "card-head" && typeof n.onclick === "function").onclick({});
+const redrawn = created.filter((n) => n.dataset?.draft === reasonKey).at(-1);
+if (redrawn === reason || redrawn.value !== "use the retry helper instead") {
+  console.error("FAIL: a re-render wiped what was typed into the deny reason");
+  process.exit(1);
+}
+
+/* ------------------------------------------------------------ tea party */
+
+const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1); };
+const shown = (text) => created.some((n) => n.textContent === text);
+
+// A conversation that wants you shows Alice's reading and what was said; one
+// she set aside is listed under the chatter, without its messages.
+if (!shown("SUMMARY-aaa") || !shown("TEXT-aaa")) fail("the Tea Party didn't render a conversation waiting on you");
+if (!shown("SUMMARY-bbb")) fail("the chatter section didn't list the conversation Alice set aside");
+if (shown("TEXT-bbb")) fail("a set-aside conversation rendered its messages — it should be one quiet line");
+if (!created.some((n) => n.href === "https://slack.example/x")) fail("no Open in Slack link");
+
+/* ---------------------------------------------------------------- world */
+
+const lastUpdate = world.updates.at(-1);
+if (!lastUpdate) fail("app.js never told the world what's in it");
+if (lastUpdate.tea.items.length !== 1) {
+  fail(`the Tea Party should hold one letter (chatter excluded), got ${lastUpdate.tea.items.length}`);
+}
+// Before the throne: the permission (a), the question (j), the finished turn
+// (c) — the desk — and the terminal session asking (i).
+const before = lastUpdate.court.waiting.map((t) => t.id).sort().join(",");
+if (before !== "a,c,i,j") fail(`soldiers before the throne should be a,c,i,j; got ${before}`);
+if (lastUpdate.court.others.some((t) => t.closedAt)) fail("an archived session is standing about the court");
+
+// A reconnect's hello is old news too.
+send({ type: "hello", todos, slack });
+if (world.errands.length !== 1) fail(`a second hello sent Alice walking: ${JSON.stringify(world.errands)}`);
+
+// A session asking for something new is a walk to Court.
+send({ type: "todo", todo: { ...base, id: "n", name: "fresh-one", status: "needs-you",
+  pending: { id: "r9", kind: "permission", toolName: "Bash", input: { command: "ls" }, askedAt: Date.now() } } });
+const toCourt = world.errands.at(-1);
+if (toCourt?.district !== "court" || !toCourt.text.includes("fresh-one")) {
+  fail(`a new permission didn't send Alice to Court by name; got ${JSON.stringify(toCourt)}`);
+}
+
+// Slack: a new conversation that wants you is a walk to the Tea Party. One
+// she hasn't read yet, or has read and set aside, isn't.
+let n = world.errands.length;
+send({ type: "slack", slack: { ...slack, items: [...slack.items,
+  slackItem("ddd", false), slackItem("eee", null, { triaged: false, summary: null })] } });
+if (world.errands.length !== n) fail(`chatter or an unread letter sent Alice walking: ${JSON.stringify(world.errands.at(-1))}`);
+send({ type: "slack", slack: { ...slack, items: [...slack.items, slackItem("ccc", true, { from: "Ajay" })] } });
+const toTea = world.errands.at(-1);
+if (world.errands.length !== n + 1 || toTea.district !== "tea" || !toTea.text.includes("Ajay")) {
+  fail(`a new letter didn't send Alice to the Tea Party; got ${JSON.stringify(toTea)}`);
+}
+// The same letter again is old news.
+n = world.errands.length;
+send({ type: "slack", slack: { ...slack, items: [...slack.items, slackItem("ccc", true, { from: "Ajay" })] } });
+if (world.errands.length !== n) fail("the same letter sent Alice walking twice");
 
 console.log(
   `PASS: app.js ran; ${heads.length} cards, decree (${decrees.length} nodes), ` +

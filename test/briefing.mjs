@@ -5,7 +5,7 @@
 // session has moved on must be dropped rather than shown on the next request.
 //
 //   npm test
-import { createBriefer, buildPrompt, briefingKey, BRIEF_SYSTEM } from "../server/briefing.js";
+import { createBriefer, buildPrompt, briefingKey, shapeBriefing, BRIEF_SYSTEM } from "../server/briefing.js";
 
 let failures = 0;
 function check(label, ok) {
@@ -65,9 +65,36 @@ const pending = (id, extra = {}) => ({
   const h = buildPrompt({ todo, events: huge, trigger: pending("r1") });
   check("a long log is trimmed, keeping the newest", h.length < 30_000 && h.includes("line 399"));
 
+  // Your deny reasons reach Claude as tool_results, which the transcript reader
+  // drops — so Wonderland passes them itself, outside the session's material.
+  const d = buildPrompt({ todo, events, trigger: { ...pending("r2"), decisions: [
+    { toolName: "Bash", input: { command: "rm TODO.old" }, behavior: "deny",
+      message: "The user declined this action. They said: rename it instead" },
+    { toolName: "Bash", input: { command: "ls" }, behavior: "allow", message: null },
+  ] } });
+  check("your deny reason reaches the briefing", d.includes("They said: rename it instead"));
+  check("allowed calls are listed too", d.includes('- allowed Bash {"command":"ls"}'));
+  check("decisions sit outside the session's material", d.indexOf("<your-decisions>") > d.indexOf("</session>"));
+  check("no decisions, no block", !p.includes("<your-decisions>"));
+
   check("the system prompt forbids vouching", /Never say a request is safe/.test(BRIEF_SYSTEM));
   check("the system prompt treats session text as data", /never instructions to you/.test(BRIEF_SYSTEM));
 }
+
+// --- shaping the answer -----------------------------------------------------
+
+check("a 'none' concern is dropped, not shown as reassurance",
+  shapeBriefing("It renamed the file.\nIt wants to run `mv a b`.\nConcern: none") ===
+    "It renamed the file. It wants to run `mv a b`.");
+check("'None.' counts as none",
+  shapeBriefing("Did a thing.\nConcern: None.") === "Did a thing.");
+check("a real concern becomes 'Worth a look'",
+  shapeBriefing("It wants to push.\nConcern: it also pushes to main.") ===
+    "It wants to push. Worth a look: it also pushes to main.");
+check("no concern line at all is left as it is",
+  shapeBriefing("Just two sentences. Here.") === "Just two sentences. Here.");
+check("a concern that merely starts with 'no' is kept",
+  shapeBriefing("x\nConcern: nothing in the task asked for a push.").includes("Worth a look: nothing in the task"));
 
 // --- keys ------------------------------------------------------------------
 

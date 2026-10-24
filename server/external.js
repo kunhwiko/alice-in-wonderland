@@ -90,8 +90,11 @@ export function ingestHook(payload, broadcast) {
   // canUseTool bridge is authoritative for those.
   if (existing?.kind === "owned") return existing;
 
+  // `askedAt` marks this notification, so the page can tell a new one from
+  // any other change to the card (a rename by the poller, say).
+  const askedAt = Date.now();
   if (existing) {
-    const todo = store.update(existing.id, { status: "needs-you", lastText: message });
+    const todo = store.update(existing.id, { status: "needs-you", lastText: message, askedAt });
     broadcast({ type: "todo", todo });
     return todo;
   }
@@ -104,6 +107,7 @@ export function ingestHook(payload, broadcast) {
     title: message,
     lastText: message,
     status: "needs-you",
+    askedAt,
   });
   broadcast({ type: "todo", todo });
   return todo;

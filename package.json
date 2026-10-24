@@ -6,10 +6,11 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "test": "node test/transcript.mjs && node test/handover.mjs && node test/briefing.mjs && node test/dom-smoke.mjs"
+    "test": "node test/transcript.mjs && node test/handover.mjs && node test/briefing.mjs && node test/slack.mjs && node test/dom-smoke.mjs"
   },
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.0"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.0",
+    "three": "0.186.1"
   }
 }

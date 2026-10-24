@@ -1,10 +1,10 @@
-/* Wonderland — a storybook page in the 1951 film's palette.
+/* Wonderland — a storybook garden in the 1951 film's palette.
    Deliberately light: this is a golden afternoon, not a rabbit hole.
 
-   The background is a full-bleed painting behind a cream veil (see
-   body::before / body::after). Text that sits straight on it — group labels,
-   the empty state, the footer — carries a light halo to stay legible. If you
-   lighten the veil further, strengthen those halos to match. */
+   The page is the world: a full-bleed WebGL canvas (world.js), with HTML
+   floating over it — district signs, Alice's speech bubble, the soldiers'
+   name tags — and a paper panel that slides in from the right when you visit
+   a district. Everything you decide is decided on that paper. */
 
 :root {
   color-scheme: light;
@@ -45,145 +45,265 @@
   --garden:     #5b9147;
   --garden-wash:#e9f3e4;
 
-  /* Background and veil. The painting is busy and fully saturated, so the
-     veil has to hold it back — below about .75 the text on bare background
-     starts to struggle even with its halo. */
-  --bg-image: url("/bg-garden.jpg");
-  --bg-blur: 1.5px;
-  --veil-top: .55;
-  --veil-a: .78;
-  --veil-b: .82;
-  --veil:
-    radial-gradient(1200px 520px at 50% -140px,
-      rgba(255,253,244,var(--veil-top)) 0%, rgba(255,253,244,0) 72%),
-    linear-gradient(rgba(251,246,233,var(--veil-a)) 0%,
-      rgba(251,246,233,var(--veil-b)) 55%, rgba(251,246,233,var(--veil-a)) 100%);
-
-  /* Halo behind any text that sits straight on the painting. Raise it if you
-     lighten the veil. */
-  --halo: 0 1px 0 rgba(255,253,244,.95), 0 0 10px rgba(255,253,244,.85);
+  /* What text floating over the world sits on. */
+  --glass: rgba(255, 253, 246, .9);
 
   --radius: 14px;
   --shadow: 0 1px 2px rgba(41,38,58,.05), 0 8px 22px -12px rgba(41,38,58,.28);
+  --lift: 0 2px 4px rgba(41,38,58,.08), 0 14px 34px -14px rgba(41,38,58,.45);
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   /* Display face for the masthead only. Baskerville is the period-correct
      choice — a 1757 transitional, the sort of face Alice's first editions
-     were set in. Swap to Didot for something colder and higher-contrast. */
+     were set in. */
   --display: Baskerville, "Hoefler Text", Didot, "Bodoni 72", Georgia, serif;
+
+  --panel-w: min(560px, 100vw);
 }
 
 * { box-sizing: border-box; }
 
-/* The base colour lives on <html>, not <body>: body's own background would
-   paint over the negative-z-index pseudo-elements below. */
-html { background: var(--paper); }
-
+html, body { height: 100%; }
 body {
-  margin: 0;
+  margin: 0; overflow: hidden;
   color: var(--ink);
   font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
-  background: transparent;
+  /* the sky's horizon, for the instant before the world is drawn */
+  background: linear-gradient(#8fb8e8, #fbe9d2 60%, #8cc46a 60%);
 }
-
-/* The painting: fixed and covering, with just enough blur to soften detail
-   without losing the scene. Scaled up slightly so the blur doesn't bleed a
-   soft edge into view. */
-body::before {
-  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
-  background: var(--bg-image) center center / cover no-repeat;
-  filter: blur(var(--bg-blur)) saturate(1);
-  transform: scale(1.03);
-}
-
-
-/* The veil, ~.80. Low enough to make out the garden, the tea-party and the
-   rabbit hole; high enough that opaque cards and haloed text still read.
-   The radial on top keeps the golden-afternoon light coming from above. */
-body::after {
-  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background-image: var(--veil);
-  background-repeat: no-repeat, no-repeat;
-}
-
 
 code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
 
-/* ------------------------------------------------------------------ header */
+/* ------------------------------------------------------------------ world */
 
-header {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 20px 28px 18px;
-  /* The White Rabbit's watches and keys, sitting ON TOP of the white wash —
-     first background layer wins — so they read as printing on the paper
-     rather than something under frosted glass. */
-  background-image:
-    url("/header-watches.svg"),
-    linear-gradient(rgba(255,255,255,.9), rgba(255,255,255,.9));
-  background-repeat: repeat, no-repeat;
-  background-size: 216px 88px, auto;
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--line);
-  position: sticky; top: 0; z-index: 5;
+#world {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  display: block; touch-action: none; outline: none;
 }
-/* the Cheshire Cat's stripes, run along the foot of the masthead */
-header::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px;
-  background: repeating-linear-gradient(
-    100deg,
-    var(--chesh) 0 16px, var(--chesh-soft) 16px 32px
-  );
-  opacity: .82;
+/* Labels sit over the canvas but mustn't eat its drags — only the signs,
+   which are buttons, take the pointer. */
+#overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.world-label { position: absolute; left: 0; top: 0; will-change: transform; }
+
+.sign {
+  pointer-events: auto; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px 6px 16px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--line);
+  box-shadow: var(--lift);
+  font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--ink);
+  white-space: nowrap;
+  transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.sign:hover, .sign.hover { background: #fff; border-color: var(--alice); }
+.sign-count:empty { display: none; }
+.sign-count {
+  min-width: 22px; padding: 0 7px; border-radius: 999px;
+  background: var(--heart); color: #fff;
+  font: 700 12px/22px ui-sans-serif, system-ui, sans-serif; text-align: center;
+  box-shadow: 0 1px 0 var(--heart-deep);
+}
+.sign.has-items { border-color: var(--heart); }
+.sign.focused { opacity: 0; pointer-events: none; }
+.sign-tea.has-items .sign-count { background: var(--gold-deep); box-shadow: 0 1px 0 #7a5608; }
+.sign-tea.has-items { border-color: var(--gold); }
+
+/* Alice's speech bubble, with its tail pointing down at her. */
+.bubble {
+  max-width: 260px; padding: 9px 14px; margin-top: -10px;
+  background: #fff; border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--lift);
+  font-family: var(--serif); font-style: italic; font-size: 15px; line-height: 1.35;
+  color: var(--ink); text-align: center;
+  animation: pop .22s ease-out;
+}
+.bubble::after {
+  content: ""; position: absolute; left: 50%; bottom: -8px; width: 14px; height: 14px;
+  background: #fff; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  transform: translateX(-50%) rotate(45deg);
+}
+@keyframes pop { from { opacity: 0; scale: .85; } to { opacity: 1; scale: 1; } }
+
+.tag {
+  padding: 1px 8px; border-radius: 6px;
+  background: var(--glass); border: 1px solid var(--heart);
+  font: 600 11px/1.6 ui-sans-serif, system-ui, sans-serif; color: var(--heart-deep);
+  white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
 }
 
-.brand { display: flex; align-items: center; gap: 14px; }
-#portrait {
-  width: 52px; height: 52px; border-radius: 50%; object-fit: cover;
-  background: #fff; border: 1px solid var(--line);
-  box-shadow: 0 1px 5px rgba(41,38,58,.16), inset 0 0 0 2px #fff;
-  flex: 0 0 auto;
+#no-world {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(440px, calc(100vw - 32px)); padding: 18px 22px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--lift); font-family: var(--serif); font-style: italic; text-align: center;
 }
 
+@media (prefers-reduced-motion: reduce) { .bubble { animation: none; } }
+
+/* -------------------------------------------------------------------- hud */
+
+#hud {
+  position: fixed; top: 16px; left: 16px; right: 16px; z-index: 4;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  pointer-events: none;
+}
+#hud > * { pointer-events: auto; }
+.brand {
+  padding: 10px 18px 10px; border-radius: var(--radius);
+  background: var(--glass); border: 1px solid var(--line); box-shadow: var(--lift);
+  backdrop-filter: blur(6px);
+  min-width: 0;
+}
 h1 {
   margin: 0; font-family: var(--display); font-weight: 400;
-  /* clamp so "Alice in Wonderland" scales down on a narrow window instead of
-     wrapping under the portrait. */
-  font-size: clamp(21px, 3.2vw, 31px);
+  font-size: clamp(19px, 2.6vw, 26px); line-height: 1.2;
   letter-spacing: .5px; color: var(--ink); white-space: nowrap;
-  text-shadow: 0 1px 0 #fff;
 }
 h1::after {
   content: "♠ ♥ ♦ ♣";
-  margin-left: 12px; font-size: 11px; letter-spacing: 4px; vertical-align: 4px;
-  white-space: nowrap;
+  margin-left: 10px; font-size: 10px; letter-spacing: 4px; vertical-align: 4px;
   background: linear-gradient(90deg, var(--ink) 0 25%, var(--heart) 25% 75%, var(--ink) 75%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
   opacity: .5;
 }
 .brand p {
   margin: 2px 0 0; color: var(--ink-soft);
-  font-family: var(--serif); font-style: italic; font-size: 14.5px;
+  font-family: var(--serif); font-style: italic; font-size: 14px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-main { max-width: 880px; margin: 0 auto; padding: 26px 28px 40px; }
+.places { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.place {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--glass); backdrop-filter: blur(6px); box-shadow: var(--lift);
+  font-family: var(--serif); font-weight: 600;
+}
+.place.active { border-color: var(--alice); background: var(--alice-wash); }
+.place-count:empty { display: none; }
+.place-count {
+  min-width: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--heart); color: #fff; text-align: center;
+  font: 700 11.5px/20px ui-sans-serif, system-ui, sans-serif;
+}
+.place-tea .place-count { background: var(--gold-deep); }
+#new-btn { box-shadow: var(--lift); }
 
-/* Below this the masthead has to choose between the ornaments and the title. */
+/* While a panel is open the HUD's right-hand buttons would sit under it. */
+body.panel-open .places { margin-right: calc(var(--panel-w) - 16px + 12px); }
+
 @media (max-width: 720px) {
   h1::after { display: none; }
+  #hud { flex-direction: column; }
+  .places { justify-content: flex-start; }
+  body.panel-open .places { display: none; }
+  /* every line of a phone's panel is worth more than the quote */
+  #panel footer { display: none; }
+  /* a phone's panel is the whole screen already */
+  #panel { width: 100vw; }
+  #panel-grip, #panel-expand { display: none; }
+  .panel-head { padding-right: 56px; }
 }
+
+/* ------------------------------------------------------------------ panel */
+
+/* A sheet of the storybook, laid over the right of the world. */
+#panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: var(--panel-w); z-index: 6;
+  display: flex; flex-direction: column;
+  background: var(--paper); border-left: 1px solid var(--line);
+  box-shadow: -18px 0 48px -24px rgba(41,38,58,.5);
+  animation: slide-in .28s cubic-bezier(.2,.8,.2,1);
+}
+#panel[hidden] { display: none; }
+@keyframes slide-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { #panel { animation: none; } }
+
+.panel-head {
+  position: relative; padding: 20px 56px 14px 24px;
+  background-image: url("/header-watches.svg"), linear-gradient(rgba(255,255,255,.92), rgba(255,255,255,.92));
+  background-repeat: repeat, no-repeat;
+  background-size: 216px 88px, auto;
+  border-bottom: 1px solid var(--line);
+}
+/* the Cheshire Cat's stripes, run along the foot of the panel's head */
+.panel-head::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px;
+  background: repeating-linear-gradient(100deg, var(--chesh) 0 16px, var(--chesh-soft) 16px 32px);
+  opacity: .82;
+}
+.panel-head h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 25px; line-height: 1.2; }
+.panel-head p { margin: 2px 0 0; font-family: var(--serif); font-style: italic; color: var(--ink-soft); font-size: 14px; }
+.panel-head .dismiss { top: 18px; right: 16px; }
+.panel-head #panel-expand { right: 52px; font-size: 19px; }
+.panel-head { padding-right: 92px; }
+
+/* The panel's left edge: drag it to make the panel wider or narrower. */
+#panel-grip {
+  position: absolute; top: 0; bottom: 0; left: -5px; width: 10px; z-index: 1;
+  cursor: ew-resize; touch-action: none;
+}
+#panel-grip::after {
+  content: ""; position: absolute; top: 50%; left: 3px; width: 4px; height: 44px; margin-top: -22px;
+  border-radius: 2px; background: var(--line); opacity: 0; transition: opacity .15s;
+}
+#panel-grip:hover::after, body.resizing #panel-grip::after { opacity: 1; }
+body.resizing { cursor: ew-resize; user-select: none; }
+body.resizing #panel { animation: none; }
+/* A wide panel leaves no room beside it for the HUD's buttons. */
+body.panel-open.panel-wide .places { display: none; }
+
+.panel-body { flex: 1; overflow-y: auto; padding: 20px 24px 8px; overscroll-behavior: contain; }
+
+/* ------------------------------------------------------------ Alice's desk */
+
+/* One sheet above the queue, in Alice's voice: what's waiting, answerable in
+   place. A plain sheet of paper rather than a card — it's her overview of the
+   cards, not one more of them. */
+#desk {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--alice);
+  border-radius: var(--radius);
+  padding: 14px 18px 6px;
+  box-shadow: var(--shadow);
+}
+#desk.has-items { border-top-color: var(--heart); }
+.desk-say {
+  display: flex; align-items: center; gap: 12px;
+  font-family: var(--serif); font-style: italic; font-size: 16px; color: var(--ink);
+  padding-bottom: 8px;
+}
+.desk-say::before {
+  content: "♥"; flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; font-style: normal; font-size: 18px; color: var(--heart);
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 4px rgba(41,38,58,.14), inset 0 0 0 2px #fff;
+}
+.desk-item { border-top: 1px dashed var(--line); padding: 12px 0 14px; }
+.desk-head { display: flex; align-items: baseline; gap: 10px; }
+.desk-num { font-family: var(--serif); color: var(--heart); font-weight: 700; }
+.desk-head .cwd { margin-left: 0; }
+.desk-wait {
+  margin-left: auto; flex: 0 0 auto;
+  font-size: 11px; color: var(--heart-deep); font-weight: 600; white-space: nowrap;
+}
+.desk-show { flex: 0 0 auto; font-size: 12px; padding: 3px 10px; }
+.desk-task { color: var(--ink-soft); font-size: 13px; margin-top: 3px; font-family: var(--serif); }
+.desk-item .decree { margin-top: 10px; }
 
 /* ------------------------------------------------------------------ groups */
 
-/* ~ Waiting on you ~ — a ruled storybook section break, with an Alice whose
-   mood matches the section: expectant, mid-tumble, or fast asleep. */
+/* ~ Waiting on you ~ — a ruled storybook section break, with the suit the
+   Court's soldiers wear for that state. */
 .group-label {
   margin: 32px 0 14px; display: flex; align-items: center; gap: 12px;
   font-family: var(--serif); font-style: italic; font-size: 16px;
   color: var(--ink); letter-spacing: .2px;
-  text-shadow: var(--halo);
 }
 .group-label::before {
-  content: ""; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 50%;
-  background: #fff center/cover no-repeat;
+  flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; font-style: normal; font-size: 17px;
+  background: #fff;
   border: 1px solid var(--line);
   box-shadow: 0 1px 4px rgba(41,38,58,.14), inset 0 0 0 2px #fff;
 }
@@ -191,11 +311,11 @@ main { max-width: 880px; margin: 0 auto; padding: 26px 28px 40px; }
   content: ""; height: 1px; flex: 1;
   background: linear-gradient(to right, rgba(41,38,58,.28), transparent);
 }
-.g-needs::before   { background-image: url("/characters/waiting.png"); border-color: var(--heart); }
-.g-working::before { background-image: url("/characters/busy.png");    border-color: var(--gold); }
-.g-resting::before { background-image: url("/characters/rest.png");    border-color: var(--garden); }
-/* Alice dismayed, hands to her face — for the sessions that have stopped. */
-.g-stopped::before { background-image: url("/characters/stopped.png"); border-color: var(--muted); }
+.g-needs::before   { content: "♥"; color: var(--heart);      border-color: var(--heart); }
+.g-working::before { content: "♦"; color: var(--alice-deep); border-color: var(--gold); }
+.g-resting::before { content: "♣"; color: var(--garden);     border-color: var(--garden); }
+/* the suit a stopped soldier is left showing */
+.g-stopped::before { content: "♠"; color: var(--muted);      border-color: var(--muted); }
 .group-label .count {
   background: var(--heart); color: #fff; border-radius: 999px;
   padding: 1px 10px; font-size: 11px; font-weight: 700;
@@ -208,16 +328,10 @@ main { max-width: 880px; margin: 0 auto; padding: 26px 28px 40px; }
 .empty {
   color: var(--ink); font-family: var(--serif); font-style: italic; font-size: 16.5px;
   padding: 26px 4px 48px; text-align: center;
-  text-shadow: var(--halo);
 }
-/* Framed like a plate in a storybook. A frame suits any artwork — blending
-   the white out only works for line art, and turns a dark scene to mud. */
 .empty::before {
-  content: ""; display: block;
-  width: min(340px, 100%); aspect-ratio: 4 / 3; margin: 0 auto 18px;
-  background: #fff center/cover no-repeat url("/characters/empty.png");
-  border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 2px 4px rgba(41,38,58,.07), 0 14px 30px -14px rgba(41,38,58,.4);
+  content: "♠ ♥ ♦ ♣"; display: block; margin-bottom: 10px;
+  font-style: normal; font-size: 13px; letter-spacing: 6px; color: var(--muted);
 }
 
 /* ------------------------------------------------------------------- cards */
@@ -557,19 +671,19 @@ dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; pad
 
 /* ---------------------------------------------------------------- archive */
 
-/* Alice mid-fall, for the pile you've dropped things into. Laid out like a
+/* The rabbit-hole, for the pile you've dropped things into. Laid out like a
    group heading so the archive doesn't read as a different kind of thing. */
 details summary {
   cursor: pointer; color: var(--ink); font-family: var(--serif); font-style: italic;
   font-size: 15px; margin-top: 34px; padding: 6px 0;
-  text-shadow: var(--halo);
   display: flex; align-items: center; gap: 12px;
   list-style: none;
 }
 details summary::-webkit-details-marker { display: none; }
 details summary::before {
-  content: ""; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 50%;
-  background: #fff center/cover no-repeat url("/characters/archive.png");
+  content: "◎"; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; font-style: normal; color: var(--chesh);
+  background: #fff;
   border: 1px solid var(--chesh);
   box-shadow: 0 1px 4px rgba(41,38,58,.14), inset 0 0 0 2px #fff;
 }
@@ -578,11 +692,6 @@ details summary::after {
   background: linear-gradient(to right, rgba(41,38,58,.28), transparent);
 }
 details[open] summary::before { opacity: .85; }
-/* Nothing dropped down the hole yet — Alice peers into it, rather than
-   reusing the "nobody needs me" plate the empty queue shows. */
-.empty-archive::before {
-  background-image: url("/characters/empty-archive.png");
-}
 #archive .card { opacity: .7; }
 #archive .card:hover { opacity: 1; }
 .archive-tools { justify-content: flex-end; margin: 0 0 12px; }
@@ -590,24 +699,88 @@ button.ghost-danger { background: transparent; border-color: transparent; color:
 button.ghost-danger:hover { background: var(--heart-wash); border-color: var(--heart); color: var(--heart); }
 button.ghost-danger.armed { background: var(--heart); border-color: var(--heart-deep); color: #fff; }
 
+
+/* -------------------------------------------------------------- tea party */
+
+#tea-status {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-family: var(--serif); font-style: italic; color: var(--ink-soft); font-size: 14px;
+  margin-bottom: 14px;
+}
+#tea-status button { margin-left: auto; font-size: 12.5px; padding: 4px 12px; font-style: normal; }
+.tea-error {
+  flex-basis: 100%; font-style: normal; font-size: 12.5px; color: var(--heart-deep);
+  background: var(--heart-wash); border-radius: 7px; padding: 6px 10px;
+}
+
+/* An invitation to the party: one Slack conversation waiting on you. */
+.invite {
+  position: relative;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 13px 16px 14px; margin-bottom: 12px; box-shadow: var(--shadow);
+}
+.invite::before {
+  content: ""; position: absolute; left: -1px; top: 14px; bottom: 14px; width: 3px;
+  border-radius: 3px; background: var(--gold);
+}
+.invite-mention::before { background: var(--heart); }
+.invite-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.invite-head .name { font-size: 16px; white-space: normal; }
+.invite-where { font-size: 12.5px; color: var(--ink-soft); font-family: var(--serif); font-style: italic; }
+.invite-when { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.badge.kind-dm      { border-color: var(--gold);  color: var(--gold-deep);  background: var(--gold-wash); }
+.badge.kind-mention { border-color: var(--heart); color: var(--heart-deep); background: var(--heart-wash); }
+.badge.kind-thread  { border-color: var(--alice); color: var(--alice-deep); background: var(--alice-wash); }
+
+/* What they actually said: literal, so set plainly, like Claude's own words. */
+.invite-said { margin-top: 8px; border-left: 2px solid var(--line-soft); padding-left: 12px; }
+.said { margin: 8px 0; }
+.said .who, .invite-parent .who {
+  font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; font-weight: 700;
+}
+.said .text {
+  white-space: pre-wrap; word-break: break-word; font-size: 13.5px; color: #34304a;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden;
+}
+.invite-parent {
+  margin-top: 8px; font-size: 12.5px; color: var(--ink-soft);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.invite-parent .who { margin-right: 6px; }
+.invite .row { margin-top: 12px; }
+.invite.quiet { box-shadow: none; background: var(--card-2); padding: 10px 14px; }
+.invite.quiet::before { background: var(--line); }
+.invite.quiet .briefing { background: transparent; border-left-color: var(--line); padding: 4px 10px; }
+
+/* "Open in Slack" is a link, dressed as the primary button. */
+a.button {
+  display: inline-block; text-decoration: none;
+  font-size: 14px; border-radius: 9px; padding: 7px 14px; border: 1px solid var(--line);
+}
+a.button.primary {
+  background: linear-gradient(var(--alice), var(--alice-deep));
+  border-color: var(--alice-deep); color: #fff; font-weight: 600;
+  box-shadow: 0 1px 0 rgba(47,107,173,.5);
+}
+a.button.primary:hover { background: var(--alice-deep); }
+
+details.chatter summary { margin-top: 22px; font-size: 14px; }
+details.chatter summary::before { content: "☕"; border-color: var(--line); }
+details.chatter[open] summary { margin-bottom: 12px; }
+
 /* ----------------------------------------------------------------- footer */
 
 footer {
-  max-width: 880px; margin: 0 auto; padding: 30px 28px 64px;
+  padding: 12px 24px 16px; border-top: 1px solid var(--line-soft);
   text-align: center; color: var(--ink-soft);
-  font-family: var(--serif); font-style: italic; font-size: 14.5px;
-  text-shadow: var(--halo);
+  font-family: var(--serif); font-style: italic; font-size: 13px;
 }
-footer::before {
-  content: "❦"; display: block; font-size: 17px; color: var(--chesh);
-  margin-bottom: 12px; font-style: normal; opacity: .75;
-}
-footer cite { font-style: normal; font-size: 12px; display: block; margin-top: 7px; opacity: .8; }
+footer cite { font-style: normal; font-size: 11px; display: block; margin-top: 3px; opacity: .8; }
 
 .toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 20;
   background: var(--ink); color: var(--paper);
-  border-radius: 999px; padding: 10px 22px;
+  border-radius: 999px; padding: 10px 22px; max-width: calc(100vw - 32px);
   font-family: var(--serif); font-style: italic; font-size: 14.5px;
   box-shadow: 0 12px 32px -8px rgba(41,38,58,.55);
 }

@@ -6,7 +6,7 @@
 // commands and diffs still render verbatim, in monospace.
 export const alice = {
   title: "Alice in Wonderland",
-  tagline: "Alice is minding your sessions.",
+  tagline: "Alice is minding your sessions, and your letters.",
 
   empty: "Curiouser and curiouser — nobody needs me at all just now.",
   emptyArchive: "Nothing down the rabbit-hole yet.",
@@ -33,6 +33,30 @@ export const alice = {
   interrupted: "Oh dear — I lost hold of this one. Say something and I'll fetch it back.",
   failed: "Something went dreadfully wrong.",
   gone: "It's wandered off entirely.",
+
+  // Alice's desk: everything waiting on you, in one place, oldest first.
+  deskWaiting: (n) => {
+    const words = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+    const w = words[n] ?? String(n);
+    return n === 1 ? `${w} of them is waiting on you.` : `${w} of them are waiting on you.`;
+  },
+  deskClear: "Nobody needs you just now.",
+  deskBusy: (names) => `Still busy: ${names}.`,
+  deskResting: (names) => `Resting: ${names}.`,
+  deskTerminal: (n) =>
+    n === 1
+      ? "One in a terminal wants you too — I can't reach it from here."
+      : `${n} in terminals want you too — I can't reach them from here.`,
+  waitingFor: (ms) => {
+    const m = Math.floor(ms / 60_000);
+    if (m < 1) return "just now";
+    if (m < 60) return `waiting ${m}m`;
+    return `waiting ${Math.floor(m / 60)}h ${m % 60}m`;
+  },
+  deskAsks: "It's asking you —",
+  deskTurnBack: "It's finished, and come back to you.",
+  noted: "Noted",
+  openCard: "Show me the card",
 
   briefingReading: "Let me have a look at what it's been up to…",
   briefingFailed: "I couldn't make sense of that one — you'll have to read it yourself.",
@@ -112,6 +136,56 @@ export const alice = {
   send: "Say something",
   sendPlaceholder: "Tell it what to do next…",
   thinking: "Thinking…",
+
+  // ---- the world --------------------------------------------------------
+  districts: { tea: "The Tea Party", court: "The Queen's Court" },
+  districtHints: {
+    tea: "Slack conversations waiting on you",
+    court: "Sessions waiting on your word",
+  },
+  panelWider: "Make it wider (or drag its edge)",
+  panelNarrower: "Back to the usual size",
+  panelGrip: "Drag to resize — double-click to switch between wide and usual",
+  noWorld: "I can't draw Wonderland in this browser (no WebGL), but everything is still here — use the buttons above.",
+
+  // What she says when she arrives somewhere with news. Short: it's a
+  // speech bubble, and the panel has the detail.
+  errandTea: (items) =>
+    items.length === 1
+      ? `A letter from ${items[0].item.from}!`
+      : `${items.length} new letters at the Tea Party!`,
+  errandCourt: (news) => {
+    if (news.length > 1) return `${news.length} of them want you at Court!`;
+    const { kind, todo } = news[0];
+    const name = todo.name ?? "A session";
+    if (kind === "question") return `${name} has a question for you.`;
+    if (kind === "turn") return `${name} has finished, and come back to you.`;
+    if (kind === "terminal") return `${name} wants you, in its terminal.`;
+    return `${name} wishes to do something. May it?`;
+  },
+  errandStart: "This has been waiting a while…",
+  errandOnTheWay: ["Oh! I must go and see.", "Curiouser and curiouser…", "Oh dear, oh dear!", "Coming!"],
+
+  // ---- the Tea Party: Slack ----------------------------------------------
+  teaKindDm: "dm",
+  teaKindMention: "mentioned",
+  teaKindThread: "thread",
+  teaDm: "a direct message",
+  teaGroupDm: "a group message",
+  teaReading: "Let me read this one…",
+  teaOpen: "Open in Slack",
+  teaDone: "Done with it",
+  teaDoneToast: "Crossed off — until somebody says something new.",
+  teaCheck: "Look again",
+  teaChecking: "Looking…",
+  teaChecked: (when) => `I last looked through Slack ${when}.`,
+  teaFirstLook: "I'm having my first look through Slack…",
+  teaNever: "I haven't looked through Slack yet.",
+  teaOff: "Slack is turned off for now (WONDERLAND_SLACK=on brings it back).",
+  teaError: (e) => `Something went wrong the last time I looked: ${e}`,
+  teaEmpty: "Nobody's waiting on you in Slack. More tea?",
+  teaEmptyYet: "Nothing yet — I'll set a place as soon as I've looked.",
+  teaChatter: (n) => `Just chatter (${n}) — nobody's waiting on these`,
 
   // Carroll, 1865 — public domain, and as good a description of a work queue
   // as anyone has managed since.

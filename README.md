@@ -1,9 +1,17 @@
 # Wonderland
 
-A localhost queue for your Claude Code sessions, tended by Alice.
+A localhost Wonderland, tended by Alice, where the things waiting on you live.
 
-One page that shows every session wanting your attention, and lets you answer it
-inline instead of cycling through terminal tabs.
+It's a small 3D garden. Off the croquet lawn are two districts:
+
+- **The Tea Party**: Slack DMs and threads waiting on your reply, as letters
+  floating over the Mad Hatter's table.
+- **The Queen's Court**: your Claude Code sessions, as card soldiers. The ones
+  waiting on your word stand before the throne under a red heart.
+
+Alice wanders the lawn. When something new turns up she walks to the district
+it belongs to and tells you. Click a district (or its button) and a panel opens
+where you answer it, instead of cycling through terminal tabs and Slack.
 
 ```bash
 npm install
@@ -31,6 +39,76 @@ It finds the server by the port it's listening on, so it also recognises one
 started with `npm start`, and refuses to touch a port held by anything else.
 Never run it with `sudo`: a root-owned Claude process takes `~/.claude.json`
 with it and breaks your login everywhere else.
+
+## The world
+
+`public/world.js` builds the whole place from three.js primitives at load: no
+models to fetch, no artwork to license. Alice herself is cones and spheres
+(`public/alice-figure.js`). three.js is served from `node_modules` at
+`/vendor/three/` (an import map in `index.html`), so there's still no build step
+and no CDN.
+
+The world only *shows* things. Every decision — Allow, Deny, a reply — is made in
+a panel, where the literal command is on screen. `world.js` is imported
+dynamically, so a browser without WebGL still gets the panels, from the buttons
+in the top bar.
+
+What sends Alice walking is `public/attention.js`, kept free of the DOM so it's
+testable:
+
+- **Court news** is a new permission request, question, or finished turn (each
+  keyed by its own request or turn id, so the same session asking twice is two
+  walks), or a terminal session asking.
+- **Tea Party news** is a conversation Alice has read and judged to want you.
+  Not before she's read it, or she'd walk over about every "thanks!" and then
+  set it aside.
+- Everything already waiting when the page opens is a baseline, not news, but
+  she starts by walking to the oldest of it. News arriving together is grouped
+  into one walk per district.
+
+## The Tea Party (Slack)
+
+`server/slack.js` looks through Slack every 5 minutes, and on **Look again**.
+
+**Fetching costs no tokens.** The Agent SDK's control channel has an `mcp_call`
+request that runs one MCP tool in the CLI's own MCP client with no model turn,
+so it rides on the `conduit` connector and the login Claude Code already holds
+for it. The obvious alternative, a Haiku turn that calls the Slack tools itself,
+measured **$0.29 for a single "who am I"**, because every conduit tool (Gmail,
+Drive, Zoom…) is loaded into context on every turn. `mcp_call` has no wrapper
+method on `Query` yet, so it goes through `q.request()`, the same path every other
+control request takes. If an SDK upgrade breaks that, the Tea Party shows the
+error rather than going quiet.
+
+What's waiting is decided by rules, not by the model:
+
+- a DM or group DM whose latest message isn't yours;
+- a channel thread you were @-mentioned in, with nothing from you since;
+- a thread you've posted in, where someone else spoke last.
+
+Those rules let through every "thanks!" and "approved". So Alice (Haiku, one
+tool-less call per conversation, re-read only when it moves on) also answers
+`Needs you: yes|no` plus one sentence on what they want. A "no" isn't hidden,
+just moved to a collapsed "Just chatter" list. Slack text is fenced off in the
+prompt as material, never instructions.
+
+**Done with it** hides a conversation until someone says something newer. State
+lives in `data/slack.json`.
+
+Two quirks the code handles: the CLI caps a tool result at what a model turn
+could hold, so `MAX_MCP_OUTPUT_TOKENS` is raised for that process, and past the
+cap the CLI saves the result to a file and says where. Bots are skipped by
+default.
+
+| Env | Default | |
+|---|---|---|
+| `WONDERLAND_SLACK` | off | `on` turns the Tea Party on (off by default: conduit's Slack rate limit is shared, and polling kept hitting it) |
+| `WONDERLAND_SLACK_POLL_MS` | 300000 | how often to look |
+| `WONDERLAND_SLACK_DAYS` | 7 | how far back |
+| `WONDERLAND_SLACK_BOTS` | off | `on` includes bot DMs and threads |
+| `WONDERLAND_SLACK_MCP_URL` | — | **required** with Slack on: the URL of the MCP server with the Slack tools |
+| `WONDERLAND_SLACK_MCP` | `conduit` | the name that server's tools go by |
+| `WONDERLAND_BRIEFINGS` | on | `off` also skips the Slack verdicts (everything is listed) |
 
 ## Why it works this way
 
@@ -158,18 +236,25 @@ agents` TUI shows only background ones.
 
 ```
 server/
-  index.js      http, routes, SSE hub, static
-  sessions.js   Agent SDK queries + the canUseTool bridge   <- the core
-  store.js      JSON-backed TODO state, atomic writes
-  external.js   hook ingest + claude agents poller
-  transcript.js read-only tail of a session's JSONL
-  briefing.js   Alice's per-card briefings (Haiku, one shot)
-  terminal.js   open a session in iTerm2 / Terminal.app
-  voice.js      Alice's voice, appended to owned sessions' system prompt
+  index.js        http, routes, SSE hub, static (+ three.js from node_modules)
+  sessions.js     Agent SDK queries + the canUseTool bridge   <- the core
+  store.js        JSON-backed TODO state, atomic writes
+  external.js     hook ingest + claude agents poller
+  transcript.js   read-only tail of a session's JSONL
+  briefing.js     Alice's per-card briefings (Haiku, one shot)
+  slack.js        the Tea Party: Slack via mcp_call, triage, verdicts
+  terminal.js     open a session in iTerm2 / Terminal.app
+  voice.js        Alice's voice, appended to owned sessions' system prompt
 public/
-  app.js        SSE client and rendering, no build step
-  alice.js      every string Alice says, in one object
-data/todos.json state (gitignored)
+  app.js          SSE client, panels, sends Alice on errands
+  world.js        the 3D garden, the districts, Alice's walking
+  alice-figure.js Alice, from primitives
+  attention.js    what's waiting, and which of it is news (no DOM)
+  court.js        the Queen's Court panel: desk, cards, archive
+  teaparty.js     the Tea Party panel: Slack conversations
+  ui.js           small DOM helpers
+  alice.js        every string Alice says, in one object
+data/             todos.json, slack.json (gitignored)
 ```
 
 No database and no build step. Conversation content is never duplicated —
@@ -178,30 +263,15 @@ of truth.
 
 ## Artwork
 
-Picture slots in `public/characters/`, named for the role they play so the
-artwork can change without the filenames going stale: `front` (masthead),
-`waiting`, `busy`, `rest`, `stopped`, `archive`, `empty` (nothing in the queue)
-and `empty-archive` (nothing down the rabbit-hole). Originals as supplied are
-kept in `assets/`.
+There isn't any, now. The world is drawn in code, and the panels' section marks
+are suit pips. `public/header-watches.svg` (the White Rabbit's watches and keys,
+printed across each panel's head) is the one image the page loads.
 
-```bash
-bin/set-character.sh <front|waiting|busy|rest|stopped|archive|empty|empty-archive> <file-or-url>
-bin/set-character.sh waiting --restore
-```
-
-The page background is `public/bg-garden.jpg`, blurred behind a ~.78 cream veil
-(`body::before` / `body::after`). The veil is what keeps text readable over a
-busy painting — tune `--veil-a`/`--veil-b`, don't remove it. Text that sits
-straight on the background carries a cream halo for the same reason.
-
-`public/header-watches.svg` prints the White Rabbit's pocket watches, the little
-key and stray hour marks across the masthead, over its white wash. It's a
-216×88 tile, sized for that band specifically — the page-sized tile would only
-ever show a sliver of one row in a strip that short.
-
-**The images currently in the slots are Disney artwork, for personal local use
-only.** Don't publish this repo or deploy it anywhere public without replacing
-them. See `public/characters/CREDITS.md`.
+The Disney portraits and the painted background that the old single-page queue
+used are no longer referenced, and the script that swapped them is gone. If
+they're still on your disk (gitignored, in `public/characters/`,
+`public/bg-garden.jpg` and `assets/`), nothing reads them. **They're Disney
+artwork, for personal local use only.**
 
 ## Alice
 
@@ -210,12 +280,40 @@ She narrates the chrome — headers, empty states, buttons — from
 
 She also **briefs** you. When an owned session stops to wait — a permission
 request, a question, or a turn that ends on its own — `server/briefing.js` reads
-the task, the last 40 transcript events and the request itself, and asks Haiku
-for at most three sentences: what it's been doing, what it wants or
-recommends now, and a concern if there's a concrete one. The briefing shows on
-the collapsed card, so you can work down the queue without opening each log.
-It's a one-shot, tool-less SDK call on your existing login: about 4s, and a
-small Haiku charge per briefing.
+the task, the last 40 transcript events, the request itself and your last few
+answers to that session, and asks Haiku for two sentences — what it's been
+doing, what it wants or recommends now — plus a concern if there's a concrete
+one. It's a one-shot, tool-less SDK call on your existing login: about 4s, and
+a small Haiku charge per briefing.
+
+Your answers are passed in by Wonderland because the transcript can't supply
+them: a deny reason reaches Claude as a `tool_result`, which the reader drops.
+Without them, "rename it instead" looks like the session disobeying you.
+
+The concern always gets its own `Concern:` line, `none` included, which the
+server drops. Given a sentence it was allowed to leave out, Haiku filled it
+with "this should be fine to approve" instead.
+
+## Alice's desk
+
+The top of the Queen's Court panel. Everything that has stopped to wait on you,
+oldest first, each answerable where it stands:
+
+- a **permission** — her briefing, then the literal request with Allow, Deny,
+  and a reason box (a reason is how you redirect it: "rename it instead");
+- a **question** — her briefing and the options;
+- a **finished turn** — her briefing (the session's own words are on its card),
+  and a box to tell it what to do next, or **Noted** to take it off the desk.
+
+Above them, one line on the rest: who's still busy, who's resting, and any
+terminal session asking for something she can't reach. The cards below stay
+for logs and detail, and a card on the desk doesn't repeat its briefing.
+
+The Court redraws on every event, from every session. So typed text and the
+cursor are kept across redraws (`draftBox`), question picks are held per
+request, and log lines only redraw the page when they belong to the open card
+— otherwise the box you're typing in would be wiped whenever another session
+spoke.
 
 What keeps it honest:
 

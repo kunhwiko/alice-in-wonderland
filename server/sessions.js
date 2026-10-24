@@ -69,6 +69,25 @@ const interrupting = new Set();
  * --fork-session exists to prevent. So resume() refuses while this is set.
  */
 const handingOver = new Set();
+/**
+ * todo id -> your last few answers to its requests, newest last. For Alice's
+ * briefings: a deny reason goes back to Claude as a tool_result, which the
+ * transcript reader drops, so without this she can't see that "rename it
+ * instead" came from you — and reports the session as disobeying you.
+ */
+const decisions = new Map();
+const DECISIONS_KEPT = 5;
+
+function recordDecision(todoId, req, decision) {
+  const list = decisions.get(todoId) ?? [];
+  list.push({
+    toolName: req.toolName,
+    input: req.input,
+    behavior: decision.behavior,
+    message: decision.behavior === "deny" ? decision.message ?? null : null,
+  });
+  decisions.set(todoId, list.slice(-DECISIONS_KEPT));
+}
 
 /**
  * Answer, with a deny, every canUseTool this todo is parked on. A blocked
@@ -121,7 +140,7 @@ export function createSessionManager({ broadcast, briefer = null }) {
       };
 
       setStatus(todoId, "needs-you", { pending: req });
-      briefer?.brief(todoId, { kind: "pending", pending: req });
+      briefer?.brief(todoId, { kind: "pending", pending: req, decisions: decisions.get(todoId) ?? [] });
 
       const decision = await new Promise((resolve) => {
         pendingResolvers.set(req.id, { resolve, todoId });
@@ -134,6 +153,7 @@ export function createSessionManager({ broadcast, briefer = null }) {
       });
 
       pendingResolvers.delete(req.id);
+      recordDecision(todoId, req, decision);
       setStatus(todoId, "working", { pending: null });
       return decision;
     };
@@ -277,11 +297,16 @@ export function createSessionManager({ broadcast, briefer = null }) {
             continue;
           }
           // Turn finished. Claude is now waiting on your next message.
-          setStatus(todoId, msg.subtype === "success" ? "idle" : "failed");
-          // Only a turn that came back to you on its own. One you interrupted
-          // left through the branch above — you already know why it's waiting.
-          if (msg.subtype === "success" && finalText.trim()) {
-            briefer?.brief(todoId, { kind: "turn", turn: msg.uuid ?? Date.now(), finalText });
+          // `lastTurn` marks it as having come back to you, which is what puts
+          // it on Alice's desk — only a turn that ended on its own. One you
+          // interrupted left through the branch above; you know why it's idle.
+          const ok = msg.subtype === "success";
+          const lastTurn = ok ? { id: String(msg.uuid ?? Date.now()), at: Date.now() } : null;
+          setStatus(todoId, ok ? "idle" : "failed", { lastTurn });
+          if (lastTurn && finalText.trim()) {
+            briefer?.brief(todoId, {
+              kind: "turn", turn: lastTurn.id, finalText, decisions: decisions.get(todoId) ?? [],
+            });
           }
           finalText = "";
         }
@@ -333,7 +358,10 @@ export function createSessionManager({ broadcast, briefer = null }) {
       if (handingOver.has(todoId)) return null;
 
       launch(todo, text, { resume: todo.sessionId });
-      setStatus(todo.id, "working");
+      // You've answered the turn that came back, so it's off the desk. Cleared
+      // here rather than left to the next result: an interrupt ends a turn
+      // without one, and would otherwise bring the old turn back.
+      setStatus(todo.id, "working", { lastTurn: null });
       return store.get(todoId);
     },
 
@@ -342,7 +370,7 @@ export function createSessionManager({ broadcast, briefer = null }) {
       const entry = live.get(todoId);
       if (entry) {
         entry.queue.push(text);
-        setStatus(todoId, "working");
+        setStatus(todoId, "working", { lastTurn: null });
         return true;
       }
       return Boolean(this.resume({ todoId, text }));
