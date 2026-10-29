@@ -459,7 +459,7 @@ function renderCard(todo) {
         body.append(el("div", { className: "field-label", textContent: alice.watchedLog }));
         body.append(log);
       }
-      body.append(el("div", { className: "row" }, terminalButton(todo), closeButton(todo), stopButton(todo)));
+      body.append(el("div", { className: "row" }, terminalButton(todo), stopButton(todo)));
       card.append(body);
       return card;
     }
@@ -472,7 +472,7 @@ function renderCard(todo) {
     body.append(el("pre", { className: "tool mono", textContent: cmd }));
     const copy = el("button", { textContent: "Copy" });
     copy.onclick = () => navigator.clipboard.writeText(cmd).then(() => toast(alice.copied));
-    body.append(el("div", { className: "row" }, copy, terminalButton(todo), closeButton(todo), stopButton(todo)));
+    body.append(el("div", { className: "row" }, copy, terminalButton(todo), stopButton(todo)));
     card.append(body);
     return card;
   }
@@ -494,8 +494,7 @@ function renderCard(todo) {
     const { box, send } = replyBox(todo, "card");
     body.append(el("div", { className: "row" }, box));
     body.append(el("div", { className: "row" },
-      send, interruptButton(todo), terminalButton(todo), handoverButton(todo),
-      closeButton(todo), stopButton(todo)));
+      send, interruptButton(todo), terminalButton(todo), stopButton(todo)));
   }
 
   card.append(body);
@@ -554,18 +553,29 @@ function interruptButton(todo) {
   return b;
 }
 
-/** Ends the process. Hidden once there's nothing left running to end. */
+/**
+ * Ends the session and puts the card down the rabbit-hole. A card whose
+ * session has already ended gets a plain one-click version: there's no head
+ * left to take, and Bring it back undoes it.
+ */
 function stopButton(todo) {
-  if (DEAD.includes(todo.status)) return null;
+  if (DEAD.includes(todo.status)) {
+    const b = el("button", { className: "ghost", textContent: alice.putAway });
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      const { ok } = await api(`/api/todos/${todo.id}/stop`, {});
+      if (ok) toast(alice.putAwayToast);
+    };
+    return b;
+  }
   return confirmButton({
     label: alice.stop,
     confirmLabel: alice.stopConfirm,
     // Say plainly what's about to happen to somebody's terminal.
     warn: todo.kind === "external" ? alice.stopWarnTerminal : null,
     run: async () => {
-      const { ok, data } = await api(`/api/todos/${todo.id}/stop`, {});
+      const { ok } = await api(`/api/todos/${todo.id}/stop`, {});
       if (ok) toast(alice.stopped);
-      else if (data.reason === "not running") toast(alice.notRunning);
     },
   });
 }
@@ -586,45 +596,62 @@ function forgetButton(todo) {
   });
 }
 
-/**
- * Move the session into a terminal for good, keeping this one card.
- *
- * Distinct from "Open in a terminal", which forks: that leaves a second
- * session with a second id and a second card. This one lets go, so the
- * terminal can have the original.
+/*
+ * Into a real terminal tab. Two processes can't share one conversation, so a
+ * session that's still running either moves (handover: one id, one card,
+ * which reads along) or is forked (a second id, and a second card). Which is
+ * yours to pick, so the button asks — and only then, since a session with
+ * nothing running on it just opens.
  */
-function handoverButton(todo) {
-  if (todo.kind !== "owned" || !todo.sessionId) return null;
-  return confirmButton({
-    label: alice.handover,
-    confirmLabel: alice.handoverConfirm,
-    className: "ghost-danger",
-    warn: alice.handoverWarn,
-    run: async () => {
-      const { ok, data } = await api(`/api/todos/${todo.id}/handover`, {});
-      if (ok) toast(data.watching ? alice.handedOver : alice.handedOverBlind);
-    },
-  });
+
+const handover = async (todo) => {
+  const { ok, data } = await api(`/api/todos/${todo.id}/handover`, {});
+  if (ok) toast(data.watching ? alice.handedOver : alice.handedOverBlind);
+};
+
+const openTerminal = async (todo, fork) => {
+  const { ok } = await api(`/api/todos/${todo.id}/terminal`, { fork });
+  if (ok) toast(fork ? alice.openedForked : alice.openedTerminal);
+};
+
+const $termDialog = document.getElementById("terminal-dialog");
+
+function askTerminal(todo) {
+  const owned = todo.kind === "owned";
+  const choice = (label, className, run) => {
+    const b = el("button", { type: "button", className, textContent: label });
+    b.onclick = () => {
+      $termDialog.close();
+      run?.();
+    };
+    return b;
+  };
+  const why = (label, text) => el("p", {}, el("b", { textContent: label }), ` — ${text}`);
+
+  document.getElementById("terminal-title").textContent = alice.terminalTitle;
+  // A terminal session can't be moved: it's already in one.
+  document.getElementById("terminal-why").replaceChildren(
+    el("p", { textContent: owned ? alice.terminalWhyOwned : alice.terminalWhyExternal }),
+    owned ? why(alice.moveIt, alice.moveItWhy) : null,
+    why(alice.forkIt, alice.forkItWhy)
+  );
+  document.getElementById("terminal-choices").replaceChildren(
+    choice(alice.neverMind, "ghost"),
+    choice(alice.forkIt, owned ? "" : "primary", () => openTerminal(todo, true)),
+    owned ? choice(alice.moveIt, "primary", () => handover(todo)) : null
+  );
+  $termDialog.showModal();
 }
 
-/** Hand the session off to a real terminal tab. */
 function terminalButton(todo) {
   if (!todo.sessionId) return null;
   const b = el("button", { textContent: alice.openTerminal });
-  b.onclick = async (e) => {
+  b.onclick = (e) => {
     e.stopPropagation();
-    const { ok, data } = await api(`/api/todos/${todo.id}/terminal`, {});
-    if (ok) toast(data.forked ? alice.openedForked : alice.openedTerminal);
-  };
-  return b;
-}
-
-function closeButton(todo) {
-  const b = el("button", { className: "ghost", textContent: alice.close });
-  b.onclick = async (e) => {
-    e.stopPropagation();
-    await api(`/api/todos/${todo.id}/close`, {});
-    toast(alice.closed);
+    if (todo.live) return askTerminal(todo);
+    // Nothing running on it. An owned one is still handed over rather than
+    // just opened, or a message from here would revive it under the terminal.
+    return todo.kind === "owned" ? handover(todo) : openTerminal(todo, false);
   };
   return b;
 }
@@ -776,8 +803,10 @@ function render() {
         el("span", { className: "cwd mono", textContent: prettyCwd(t.cwd), title: t.cwd ?? "" })));
     const b = el("button", { className: "ghost", textContent: alice.reopen });
     b.onclick = async () => { await api(`/api/todos/${t.id}/reopen`, {}); toast(alice.reopened); };
-    // Closing only dismisses, so an archived session may well still be alive.
-    row.append(el("div", { className: "row" }, b, stopButton(t), forgetButton(t)));
+    // Everything here has ended, except a card closed back when Close only
+    // hid it: that one may still be running, and keeps its way to stop.
+    const alive = !DEAD.includes(t.status);
+    row.append(el("div", { className: "row" }, b, alive ? stopButton(t) : null, forgetButton(t)));
     $archive.append(row);
   }
 

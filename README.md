@@ -170,8 +170,15 @@ turn arrives as a `result` with subtype `error_during_execution`, so `drive()`
 has to know an interrupt is deliberate or it reports the stop as a failure.
 
 **"Off with its head!"** interrupts *and* closes stdin, so the child process
-exits. The transcript survives and can be resumed by id, but not in that
-process.
+exits, and puts the card **down the rabbit-hole** (the archive). The
+transcript survives: **Bring it back** returns the card as resting, and your
+next message resumes the session by id in a new process.
+
+There's no way to put a card away while its session runs on. Close used to do
+that, and a hidden session that stopped to ask for permission waited forever,
+since the desk and Alice both skip archived cards. A card whose session has
+already ended (a crash, a restart) sits under **Took a tumble** until you send
+it down the rabbit-hole in one click, without the confirm.
 
 Both appear on the permission and question cards too. Allow and deny each let
 the turn carry on, so without them the only way out of a session you'd changed
@@ -216,18 +223,26 @@ notification outright.
 
 ## Fork, or hand over
 
-Two routes into a terminal, and they are not the same thing.
+One button, **"Open in a terminal"**. A session that's still running can't
+simply be resumed in a tab, since that would put two processes on one
+transcript. So for a running session the button asks which you want:
 
-**"Open in a terminal"** forks. The session is still live here, so resuming it
-in a tab would put two processes on one transcript, and `commandFor` adds
-`--fork-session`. You get a second session with a second id, and its hook
-creates a second card. Both ends keep working.
+- **Move it there** (owned sessions only) is the handover. Wonderland stops
+  the session, opens a plain `claude --resume <same id>`, and flips the card
+  to `external` with `watching: true` so `transcript.js` follows it. One id,
+  one history, one card — which keeps the name you gave it, because
+  `pollAgents` skips the rename for watched cards. Anything the session was
+  mid-way through is lost with the stop.
+- **Fork it** adds `--fork-session`. You get a second session with a second
+  id, and its hook creates a second card. Both ends keep working. It's the
+  only choice for a terminal session, which is already open in a tab and
+  can't be moved.
 
-**"Hand it to a terminal"** moves it. Wonderland stops the session, opens a
-plain `claude --resume <same id>`, and flips the card to `external` with
-`watching: true` so `transcript.js` follows it. One id, one history, one card
-— which keeps the name you gave it, because `pollAgents` skips the rename for
-watched cards. Anything the session was mid-way through is lost with the stop.
+With nothing running there's nothing to ask: a terminal session just opens,
+and an owned one is handed over, or a message from Wonderland would revive it
+under the terminal. The server holds the same line. `/terminal` refuses to
+fork unless the request says `fork: true`, and refuses an owned session that
+isn't running.
 
 The dangerous moment is between the two. For that instant the card is an owned
 session with no process on it, which is exactly the shape `send()` revives —

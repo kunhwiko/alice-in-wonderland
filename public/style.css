@@ -658,7 +658,10 @@ dialog h2::after {
 }
 dialog label { display: block; margin-bottom: 15px; }
 dialog label span { display: block; font-size: 12.5px; color: var(--ink-soft); margin-bottom: 6px; font-style: italic; }
-dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 0; }
+dialog menu { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+.dialog-why { margin: 0 0 20px; line-height: 1.5; }
+.dialog-why p { margin: 0 0 10px; }
+.dialog-why b { font-family: var(--serif); }
 
 .dismiss {
   position: absolute; top: 13px; right: 13px;

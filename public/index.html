@@ -104,6 +104,15 @@
       </form>
     </dialog>
 
+    <!-- Asked before anything that would fork a session. A dialog rather than
+         a row on the card: the Court redraws on every event, and would wipe
+         the question while you were reading it. -->
+    <dialog id="terminal-dialog">
+      <h2 id="terminal-title"></h2>
+      <div id="terminal-why" class="dialog-why"></div>
+      <menu id="terminal-choices"></menu>
+    </dialog>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

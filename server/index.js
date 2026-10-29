@@ -13,7 +13,7 @@ import {
   ingestHook, pollAgents, stopExternal,
   startWatching, stopWatching, stopAllWatching, resumeWatching,
 } from "./external.js";
-import { openInTerminal, resumeCommandFor } from "./terminal.js";
+import { openInTerminal, resumeCommandFor, isSessionLive } from "./terminal.js";
 import { findTranscript, readEvents } from "./transcript.js";
 import { createSlackWatcher } from "./slack.js";
 import { createHall } from "./hall.js";
@@ -24,6 +24,8 @@ const PUBLIC = join(ROOT, "public");
 const VENDOR = { "/vendor/three/": join(ROOT, "node_modules", "three") };
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT ?? 7777);
+// Statuses with no session behind them any more, as court.js has them too.
+const DEAD = ["stopped", "gone", "failed", "interrupted"];
 
 /* ---------------------------------------------------------------- SSE hub */
 
@@ -37,7 +39,13 @@ const clients = new Set();
  * most likely to have changed liveness.
  */
 function present(todo) {
-  return { ...todo, resumeCommand: resumeCommandFor(todo, { ownedIsLive: sessions.isLive(todo.id) }) };
+  const ownedIsLive = sessions.isLive(todo.id);
+  return {
+    ...todo,
+    // Whether opening it in a terminal would fork it, so the page can ask first.
+    live: isSessionLive(todo, { ownedIsLive }),
+    resumeCommand: resumeCommandFor(todo, { ownedIsLive }),
+  };
 }
 
 function broadcast(event) {
@@ -289,23 +297,51 @@ const server = createServer(async (req, res) => {
         return json(res, result.ok ? 200 : 409, result);
       }
 
+      // Off with its head: end the session and put the card down the
+      // rabbit-hole, in one go. There's no putting a card away while its
+      // session runs on, because a hidden session that stops to ask you
+      // something would wait forever.
       if (action === "stop") {
-        const result =
-          todo.kind === "owned"
-            ? await sessions.stop(id)
-            : await stopExternal(todo);
-
-        if (result.ok) {
-          // Nothing will be appended to that transcript again.
-          stopWatching(id);
-          const t = store.update(id, { status: "stopped", pending: null, watching: false });
-          broadcast({ type: "todo", todo: t });
+        // One that has already ended is only put away. A dead terminal
+        // session's pid may belong to something else by now.
+        const ended = DEAD.includes(todo.status);
+        let result = { ok: true, how: "already ended" };
+        if (!ended) {
+          result = todo.kind === "owned" ? await sessions.stop(id) : await stopExternal(todo);
+          // An owned process that exited on its own, or a terminal session
+          // with no id or pid to reach: nothing to stop, so it just goes.
+          const nothingToStop = ["not running", "nothing left to stop"].includes(result.reason);
+          if (!result.ok && !nothingToStop) return json(res, 409, result);
         }
-        return json(res, result.ok ? 200 : 409, result);
+
+        // Nothing will be appended to that transcript again.
+        stopWatching(id);
+        const t = store.update(id, {
+          status: ended ? todo.status : "stopped",
+          pending: null,
+          watching: false,
+          closedAt: Date.now(),
+        });
+        broadcast({ type: "todo", todo: t });
+        return json(res, 200, { ...result, ok: true, todo: t });
       }
 
+      // A fork only when asked for one: the page asks you first, and this
+      // keeps any other caller from making one by accident.
       if (action === "terminal") {
-        const result = await openInTerminal(todo, { ownedIsLive: sessions.isLive(id) });
+        const { fork } = await readBody(req);
+        const ownedIsLive = sessions.isLive(id);
+        const live = isSessionLive(todo, { ownedIsLive });
+        if (live && !fork) {
+          return json(res, 409, { error: "It's still running, so that would fork it." });
+        }
+        // Resumed in a tab behind Wonderland's back, an owned session's next
+        // message here would put a second process on it. Handover is the
+        // route that lets go of it first.
+        if (todo.kind === "owned" && !live) {
+          return json(res, 409, { error: "Hand it over instead: it isn't running here." });
+        }
+        const result = await openInTerminal(todo, { ownedIsLive });
         return json(res, result.ok ? 200 : 409, result);
       }
 
@@ -380,14 +416,13 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { todo: t });
       }
 
-      if (action === "close") {
-        const t = store.close(id);
-        broadcast({ type: "todo", todo: t });
-        return json(res, 200, { todo: t });
-      }
-
       if (action === "reopen") {
-        const t = store.reopen(id);
+        let t = store.reopen(id);
+        // You stopped it, so it didn't take a tumble: it's resting, and the
+        // next message resumes it by id.
+        if (t.kind === "owned" && t.sessionId && t.status === "stopped") {
+          t = store.update(id, { status: "idle" });
+        }
         broadcast({ type: "todo", todo: t });
         return json(res, 200, { todo: t });
       }

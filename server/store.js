@@ -85,11 +85,6 @@ export const store = {
     return todo;
   },
 
-  close(id) {
-    // Dismiss from the queue only. The underlying session keeps running.
-    return store.update(id, { closedAt: Date.now() });
-  },
-
   reopen(id) {
     return store.update(id, { closedAt: null });
   },

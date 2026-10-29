@@ -41,6 +41,7 @@ const ids = [
   "world", "overlay", "no-world", "go-tea", "go-court", "panel", "panel-title", "panel-hint",
   "panel-close", "tea", "court", "tea-status", "tea-list", "panel-expand", "panel-grip",
   "go-hall", "hall", "hall-status", "hall-doors", "hall-bottles",
+  "terminal-dialog", "terminal-title", "terminal-why", "terminal-choices",
 ];
 const nodes = Object.fromEntries(ids.map((i) => [i, mk()]));
 const missing = new Set();
@@ -68,7 +69,7 @@ const send = (ev) => sse({ data: JSON.stringify(ev) });
 // One todo per status, so every branch of renderCard runs: each pip, each
 // group, the archive row, and the buttons attached to all of them.
 const base = { kind: "owned", cwd: "/tmp/x", name: "x", title: "t", lastText: null,
-               pending: null, closedAt: null, sessionId: "s1", isLive: true };
+               pending: null, closedAt: null, sessionId: "s1", live: true };
 const todos = [
   { ...base, id: "a", status: "needs-you", pending: {
       id: "r1", kind: "permission", toolName: "Bash",
@@ -85,13 +86,14 @@ const todos = [
   // A finished turn you've already marked "Noted": off the desk.
   { ...base, id: "m", status: "idle", lastTurn: { id: "u2", at: Date.now() }, ackedTurn: "u2",
     briefing: { key: "turn:u2", status: "ready", text: "BRIEF-NOTED" } },
-  { ...base, id: "d", status: "interrupted" },
+  // Nothing running on these, as the server would say.
+  { ...base, id: "d", status: "interrupted", live: false },
   // Briefings about moments that have passed: neither may be shown.
-  { ...base, id: "e", status: "failed",
+  { ...base, id: "e", status: "failed", live: false,
     briefing: { key: "turn:u0", status: "ready", text: "BRIEF-STALE-TURN" } },
-  { ...base, id: "f", status: "stopped",
+  { ...base, id: "f", status: "stopped", live: false,
     briefing: { key: "r0", status: "ready", text: "BRIEF-STALE-PENDING" } },
-  { ...base, id: "g", status: "gone", kind: "external" },
+  { ...base, id: "g", status: "gone", kind: "external", live: false },
   { ...base, id: "h", status: "idle", closedAt: Date.now() },
   { ...base, id: "i", status: "needs-you", kind: "external", pending: null },
   // Handed over: external, but tailed, so it shows the conversation rather
@@ -117,7 +119,12 @@ const slack = {
   items: [slackItem("aaa", true), slackItem("bbb", false)],
 };
 // The page draws from the event stream alone; fetch is only for actions.
-globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+// Recorded, to tell which action a click took.
+const posts = [];
+globalThis.fetch = async (url, opts = {}) => {
+  posts.push({ url, body: opts.body ? JSON.parse(opts.body) : null });
+  return { ok: true, json: async () => ({}) };
+};
 globalThis.queueMicrotask = (f) => f();
 // The desk ticks its "waiting 4m" labels on an interval, which would keep
 // this process alive forever after the checks finish.
@@ -230,15 +237,24 @@ if (!heads.length) {
 // Only one card is open at a time, so a card's children must be exercised
 // while that card is still the open one — clicking every head first and then
 // its children would find them all closed again.
+// Open in a terminal asks before a fork, so each click either fills the
+// dialog's choices or posts straight away. Both are recorded.
+const asked = [];
+nodes["terminal-choices"].replaceChildren = (...kids) =>
+  asked.push(kids.filter(Boolean));
 let subHeadCount = 0;
+let terminalClicks = 0;
 for (const head of heads) {
   const before = created.length;
   head.onclick({ stopPropagation() {} });
-  const subHeads = created
-    .slice(before)
-    .filter((n) => n.className === "helper-head" && typeof n.onclick === "function");
+  const mine = created.slice(before);
+  const subHeads = mine.filter((n) => n.className === "helper-head" && typeof n.onclick === "function");
   subHeadCount += subHeads.length;
   for (const h of subHeads) h.onclick({ stopPropagation() {} });
+  for (const b of mine.filter((n) => n.textContent === alice.openTerminal)) {
+    b.onclick({ stopPropagation() {} });
+    terminalClicks++;
+  }
 }
 
 const decrees = created.filter((n) => String(n.className).startsWith("decree"));
@@ -261,10 +277,34 @@ if (!created.some((n) => n.textContent === alice.interrupt)) {
   process.exit(1);
 }
 
-// Handover is the one-card alternative to forking, so it has to be reachable.
-if (!created.some((n) => n.textContent === alice.handover)) {
-  console.error("FAIL: no handover button on owned cards — forking is the only route to a terminal");
+// A card whose session has ended is put away in one click; one still running
+// is put away only by taking its head, so nothing hidden is left running.
+if (!created.some((n) => n.textContent === alice.putAway)) {
+  console.error("FAIL: a dead card has no way down the rabbit-hole");
   process.exit(1);
+}
+if (!created.some((n) => n.textContent === alice.stop)) {
+  console.error("FAIL: a live card has no Off with its head");
+  process.exit(1);
+}
+
+// A running session can't be opened in a terminal without forking it, so the
+// page asks: an owned one can move or fork, a terminal one can only fork.
+// One with nothing running just goes, and an owned one goes by handover.
+if (!terminalClicks) fail("no Open in a terminal button on any card");
+const labels = (kids) => kids.map((k) => k.textContent).join("|");
+const both = [alice.neverMind, alice.forkIt, alice.moveIt].join("|");
+const forkOnly = [alice.neverMind, alice.forkIt].join("|");
+if (!asked.some((k) => labels(k) === both)) fail("a running owned session wasn't offered both move and fork");
+if (!asked.some((k) => labels(k) === forkOnly)) fail("a running terminal session wasn't offered just a fork");
+const unasked = posts.filter((p) => /\/(terminal|handover)$/.test(p.url));
+if (unasked.some((p) => p.body?.fork)) fail("a fork was made without asking");
+if (!unasked.some((p) => p.url.endsWith("/handover"))) fail("an owned session with nothing running wasn't handed over");
+if (!unasked.some((p) => p.url.endsWith("/terminal"))) fail("a dead terminal session wasn't simply opened");
+// Picking Fork it is what asks the server for one.
+asked.find((k) => labels(k) === both).find((k) => k.textContent === alice.forkIt).onclick();
+if (!posts.at(-1).url.endsWith("/terminal") || posts.at(-1).body.fork !== true) {
+  fail("choosing Fork it didn't ask the server for a fork");
 }
 // A watched card must say it's being read, and must NOT offer the resume
 // command: following that would fork the session it's already following.
@@ -327,7 +367,8 @@ if (redrawn === reason || redrawn.value !== "use the retry helper instead") {
 
 /* ------------------------------------------------------------ tea party */
 
-const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1); };
+// A declaration, so the checks above it can use it too.
+function fail(msg) { console.error(`FAIL: ${msg}`); process.exit(1); }
 const shown = (text) => created.some((n) => n.textContent === text);
 
 // A conversation that wants you shows Alice's reading and what was said; one

@@ -17,8 +17,9 @@ export const alice = {
   groupWorking: "Terribly busy",
   groupResting: "Resting",
   // Split out from Resting: a dead session under a heading that says "resting"
-  // reads as fine when it isn't.
-  groupStopped: "Quite stopped",
+  // reads as fine when it isn't. Only the ones that ended without being asked
+  // to (a crash, a restart): the ones you stop go down the rabbit-hole.
+  groupStopped: "Took a tumble",
   groupArchive: "Down the rabbit-hole",
 
   helpers: "Helpers it sent off",
@@ -75,8 +76,10 @@ export const alice = {
 
   close: "Close",
   reopen: "Bring it back",
-  closed: "Down the rabbit-hole it goes.",
   reopened: "Back again! How very odd.",
+  // For a session that has already ended: there's no head left to take.
+  putAway: "Down the rabbit-hole with it",
+  putAwayToast: "Down the rabbit-hole it goes.",
 
   forget: "Forget it entirely",
   forgetConfirm: "Quite sure?",
@@ -94,21 +97,31 @@ export const alice = {
 
   stop: "Off with its head!",
   stopConfirm: "Quite sure?",
-  stopped: "And that was the end of it.",
+  stopped: "And that was the end of it. Down the rabbit-hole it goes.",
   stopWarnTerminal:
     "This one lives in a terminal — stopping it closes Claude in that tab.",
   notRunning: "It isn't running. Nothing to stop.",
 
   openTerminal: "Open in a terminal",
   openedTerminal: "There — through the looking-glass.",
-  openedForked: "It's still running here, so I opened a branch of it instead.",
+  openedForked: "There — a fork of it, through the looking-glass.",
   external: "That one's off in the looking-glass — I can't reach it from here.",
   externalHow: "Open it in a terminal instead:",
   copied: "Copied!",
 
-  handover: "Hand it to a terminal",
-  handoverConfirm: "Quite sure?",
-  handoverWarn: "I'll let go of it first — anything it's in the middle of is lost.",
+  // Asked only when opening it would fork it: two processes can't share one
+  // conversation, so a running session either moves or gets copied.
+  terminalTitle: "Through the looking-glass?",
+  terminalWhyOwned: "It's still running here, and two of it can't share one conversation.",
+  terminalWhyExternal:
+    "It's already open in another terminal, and two of it can't share one conversation.",
+  moveIt: "Move it there",
+  moveItWhy:
+    "I stop it here and the terminal carries on with it. This card reads along. Anything it's in the middle of is lost.",
+  forkIt: "Fork it",
+  forkItWhy: "The terminal gets a copy of its own, from this point on. Both carry on, separately.",
+  neverMind: "Never mind",
+
   handedOver: "It's yours now. I'll watch from here.",
   // Said when the handoff worked but the transcript couldn't be found: the
   // session is fine, the card just can't show the conversation.
