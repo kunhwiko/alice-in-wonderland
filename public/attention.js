@@ -73,6 +73,17 @@ export function teaNews(slack) {
 }
 
 /**
+ * Hall news: a door that won't open — locked, or stuck. Keyed by the door and
+ * how it's shut, so it's news when it shuts, not on every look that finds it
+ * still shut. One being tried right now isn't news: you're the one trying it.
+ */
+export function hallNews(hall, now = Date.now()) {
+  return (hall?.servers ?? [])
+    .filter((s) => (s.status === "needs-auth" || s.status === "failed") && !s.busy)
+    .map((s) => ({ key: `door:${s.name}:${s.status}`, district: "hall", kind: s.status, server: s, since: hall.checkedAt ?? now }));
+}
+
+/**
  * Remembers what's been seen, and hands back only what hasn't. The first look
  * is a baseline — everything already there when the page opens is old news —
  * but it reports the oldest of it, so Alice can start the day there.

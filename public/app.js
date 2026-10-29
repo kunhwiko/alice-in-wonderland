@@ -8,7 +8,8 @@ import { alice } from "/alice.js";
 import { api } from "/ui.js";
 import { ingest, render as renderCourt, todos } from "/court.js";
 import { setSlack, getSlack, renderTea, waiting as teaWaiting } from "/teaparty.js";
-import { createNoticer, courtNews, teaNews, lineup } from "/attention.js";
+import { setHall, getHall, renderHall, troubled } from "/hall.js";
+import { createNoticer, courtNews, teaNews, hallNews, lineup } from "/attention.js";
 
 /* ------------------------------------------------------------ the chrome */
 
@@ -34,6 +35,7 @@ document.getElementById("footer").append(
 const places = {
   tea: document.getElementById("go-tea"),
   court: document.getElementById("go-court"),
+  hall: document.getElementById("go-hall"),
 };
 for (const [key, b] of Object.entries(places)) {
   b.querySelector(".place-name").textContent = alice.districts[key];
@@ -60,7 +62,11 @@ function setFavicon(ring) {
 /* ------------------------------------------------------------- the panel */
 
 const $panel = document.getElementById("panel");
-const views = { tea: document.getElementById("tea"), court: document.getElementById("court") };
+const views = {
+  tea: document.getElementById("tea"),
+  court: document.getElementById("court"),
+  hall: document.getElementById("hall"),
+};
 let panelKey = null;
 
 function openPanel(key) {
@@ -161,35 +167,42 @@ const pick = (xs) => xs[Math.floor(Math.random() * xs.length)];
  */
 function sendAlice() {
   if (!world || !greeted) return;
-  const { fresh, oldest } = noticer.notice([...teaNews(getSlack()), ...courtNews([...todos.values()])]);
+  const { fresh, oldest } = noticer.notice([
+    ...teaNews(getSlack()), ...courtNews([...todos.values()]), ...hallNews(getHall()),
+  ]);
   if (oldest) world.errand(oldest.district, alice.errandStart);
-  const tea = fresh.filter((n) => n.district === "tea");
-  const court = fresh.filter((n) => n.district === "court");
-  if (court.length) world.errand("court", alice.errandCourt(court), { onTheWay: pick(alice.errandOnTheWay) });
-  if (tea.length) world.errand("tea", alice.errandTea(tea), { onTheWay: pick(alice.errandOnTheWay) });
+  const say = { court: alice.errandCourt, tea: alice.errandTea, hall: alice.errandHall };
+  for (const district of ["court", "tea", "hall"]) {
+    const news = fresh.filter((n) => n.district === district);
+    if (news.length) world.errand(district, say[district](news), { onTheWay: pick(alice.errandOnTheWay) });
+  }
 }
 
 /* ----------------------------------------------------------------- render */
 
 /**
- * Redraw. The Court is skipped for Slack news and the Tea Party for session
- * news: each panel rebuilds itself whole, and there's no sense disturbing the
- * one that didn't change.
+ * Redraw. Each panel rebuilds itself whole, so only the ones whose news this
+ * is: there's no sense disturbing the others.
  */
-function render({ court = true, tea = true } = {}) {
+function render({ court = true, tea = true, hall = true } = {}) {
   if (court) renderCourt();
   if (tea) renderTea();
+  if (hall) renderHall();
 
   const { waiting, others } = lineup([...todos.values()]);
   const letters = teaWaiting();
   const count = (n) => (n ? String(n) : "");
   places.tea.querySelector(".place-count").textContent = count(letters.length);
   places.court.querySelector(".place-count").textContent = count(waiting.length);
+  // Not in the tab's count below: a locked door isn't someone waiting on you.
+  const shut = troubled();
+  places.hall.querySelector(".place-count").textContent = count(shut.length);
 
   world?.update({
     // A letter glows for its first half hour.
     tea: { items: letters.map((i) => ({ id: i.id, fresh: Date.now() - Number(i.latestTs) * 1000 < 30 * 60_000 })) },
     court: { waiting, others },
+    hall: { servers: getHall()?.servers ?? [], skills: getHall()?.skills ?? [] },
   });
 
   // A count in the tab title and a gold ring on the favicon, so a waiting
@@ -206,16 +219,24 @@ function onEvent(e) {
   const ev = JSON.parse(e.data);
   if (ev.type === "slack") {
     setSlack(ev.slack);
-    render({ court: false });
+    render({ court: false, hall: false });
     sendAlice();
     return;
   }
-  if (ev.type === "hello") {
+  if (ev.type === "hall") {
+    setHall(ev.hall);
+    render({ court: false, tea: false });
+    sendAlice();
+    return;
+  }
+  const hello = ev.type === "hello";
+  if (hello) {
     greeted = true;
     setSlack(ev.slack);
+    setHall(ev.hall);
   }
   if (!ingest(ev)) return;
-  render({ tea: ev.type === "hello" });
+  render({ tea: hello, hall: hello });
   sendAlice();
 }
 
@@ -262,17 +283,14 @@ const newForm = document.getElementById("new-form");
 document.getElementById("new-btn").onclick = () => dialog.showModal();
 
 // Three ways out: the ✕, "Never mind", and Esc (which <dialog> gives us free).
+// Clicking the backdrop deliberately isn't one: a stray click, or a text
+// selection dragged past the edge, shouldn't throw away a half-written prompt.
 const dismiss = () => {
   newForm.reset();
   dialog.close();
 };
 document.getElementById("new-dismiss").onclick = dismiss;
 dialog.addEventListener("cancel", () => newForm.reset()); // Esc
-
-// Clicking the backdrop lands on the dialog element itself, not its contents.
-dialog.addEventListener("click", (e) => {
-  if (e.target === dialog) dismiss();
-});
 
 newForm.onsubmit = async (e) => {
   if (e.submitter?.value === "cancel") return dismiss();
@@ -287,5 +305,6 @@ newForm.onsubmit = async (e) => {
   if (ok) openPanel("court");
 };
 
-// Ages ("3m ago") drift; redraw the Tea Party now and then to keep them honest.
+// Ages ("3m ago") drift; redraw the Tea Party and the Hall now and then to
+// keep them honest.
 setInterval(() => render({ court: false }), 60_000);

@@ -138,10 +138,11 @@ export const alice = {
   thinking: "Thinking…",
 
   // ---- the world --------------------------------------------------------
-  districts: { tea: "The Tea Party", court: "The Queen's Court" },
+  districts: { tea: "The Tea Party", court: "The Queen's Court", hall: "The Hall of Doors" },
   districtHints: {
     tea: "Slack conversations waiting on you",
     court: "Sessions waiting on your word",
+    hall: "Your MCP servers and skills",
   },
   panelWider: "Make it wider (or drag its edge)",
   panelNarrower: "Back to the usual size",
@@ -163,6 +164,12 @@ export const alice = {
     if (kind === "terminal") return `${name} wants you, in its terminal.`;
     return `${name} wishes to do something. May it?`;
   },
+  errandHall: (news) =>
+    news.length > 1
+      ? `${news.length} doors won't open in the Hall!`
+      : news[0].server.status === "needs-auth"
+        ? `The door to ${news[0].server.name} is locked — it wants a key.`
+        : `The door to ${news[0].server.name} is stuck fast.`,
   errandStart: "This has been waiting a while…",
   errandOnTheWay: ["Oh! I must go and see.", "Curiouser and curiouser…", "Oh dear, oh dear!", "Coming!"],
 
@@ -186,6 +193,58 @@ export const alice = {
   teaEmpty: "Nobody's waiting on you in Slack. More tea?",
   teaEmptyYet: "Nothing yet — I'll set a place as soon as I've looked.",
   teaChatter: (n) => `Just chatter (${n}) — nobody's waiting on these`,
+
+  // ---- the Hall of Doors: MCP servers and skills ------------------------
+  hallDoors: "The doors",
+  hallDoorsHint: "Your MCP servers, as Wonderland's own connection finds them.",
+  hallBottles: "The bottles",
+  hallBottlesHint: "Your skills. Yours and your projects' can be edited here.",
+  hallReach:
+    "A sign-in here is saved for every session. A reconnect reaches the sessions I run; a terminal that's already open needs /mcp to notice.",
+  hallOff: "The Hall is turned off (WONDERLAND_HALL=off).",
+  hallChecking: "I'm trying all the doors…",
+  hallChecked: (when) => `I last tried the doors ${when}.`,
+  hallCheck: "Try them all again",
+  hallNoServers: "No MCP servers are set up at all.",
+  hallError: (e) => `I couldn't get into the Hall: ${e}`,
+  doorStatus: {
+    connected: "Open",
+    "needs-auth": "Locked — needs a sign-in",
+    failed: "Stuck",
+    pending: "Opening…",
+    disabled: "Boarded up",
+  },
+  doorTools: (n) => `${n} tool${n === 1 ? "" : "s"}`,
+  doorSource: {
+    user: "yours", project: "project", local: "local", claudeai: "claude.ai",
+    plugin: "plugin", managed: "managed", enterprise: "managed", dynamic: "dynamic",
+  },
+  authenticate: "Sign in",
+  reconnect: "Reconnect",
+  reconnecting: "Trying the door…",
+  signingIn: "Waiting for you to sign in…",
+  signInAgain: "Open the sign-in page again",
+  signInBlocked: "Your browser stopped the sign-in page opening — use the link below.",
+  reconnected: (r) =>
+    r.ok
+      ? r.sessions ? `Open again — and passed on to ${r.sessions} session${r.sessions === 1 ? "" : "s"}.` : "Open again!"
+      : `Still won't open${r.reason ? `: ${r.reason}` : "."}`,
+  skillScope: { user: "Yours", project: "In your projects", plugin: "From plugins", synced: "From claude.ai" },
+  skillFilter: "Find a skill…",
+  skillNone: "No skills match that.",
+  skillEdit: "Edit",
+  skillRead: "Read",
+  skillReveal: "Show in Finder",
+  skillSave: "Save it",
+  skillCancel: "Never mind",
+  skillSaved: "Saved. New sessions will use it.",
+  skillReadOnly: (where) => `This one comes from ${where} — an update there would overwrite an edit here, so it's read-only.`,
+  skillUnsaved: "You have unsaved changes to this skill.",
+  skillNew: "A new skill",
+  skillNewName: "What shall I call it? (lower-case, dashes)",
+  skillNewWhat: "What is it for, and when should Claude use it?",
+  skillNewGo: "Make it",
+  skillFiles: (n) => `${n} more file${n === 1 ? "" : "s"} beside it`,
 
   // Carroll, 1865 — public domain, and as good a description of a work queue
   // as anyone has managed since.

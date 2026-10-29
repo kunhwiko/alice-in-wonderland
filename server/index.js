@@ -16,6 +16,7 @@ import {
 import { openInTerminal, resumeCommandFor } from "./terminal.js";
 import { findTranscript, readEvents } from "./transcript.js";
 import { createSlackWatcher } from "./slack.js";
+import { createHall } from "./hall.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = join(ROOT, "public");
@@ -48,6 +49,7 @@ function broadcast(event) {
 const briefer = createBriefer({ broadcast });
 const sessions = createSessionManager({ broadcast, briefer });
 const slack = createSlackWatcher({ broadcast });
+const hall = createHall({ broadcast, sessions });
 
 /* ------------------------------------------------------------------ utils */
 
@@ -116,6 +118,15 @@ const server = createServer(async (req, res) => {
   const method = req.method;
 
   try {
+    // A web page you visit can send a POST to 127.0.0.1 too, and a POST here
+    // can start a session or rewrite a skill. Browsers say where a request
+    // came from; anything from another origin is refused. Hooks and curl
+    // send no Origin at all, and are let through.
+    const origin = req.headers.origin;
+    if (method !== "GET" && origin && origin !== `http://${HOST}:${PORT}` && origin !== `http://localhost:${PORT}`) {
+      return json(res, 403, { error: "not from this page" });
+    }
+
     // --- live event stream -------------------------------------------------
     if (path === "/api/events") {
       res.writeHead(200, {
@@ -124,7 +135,7 @@ const server = createServer(async (req, res) => {
         connection: "keep-alive",
       });
       // Everything the page needs to draw itself, so it needs no fetch of its own.
-      const hello = { type: "hello", todos: store.all().map(present), slack: slack.snapshot() };
+      const hello = { type: "hello", todos: store.all().map(present), slack: slack.snapshot(), hall: hall.snapshot() };
       res.write(`data: ${JSON.stringify(hello)}\n\n`);
       clients.add(res);
       const keepAlive = setInterval(() => res.write(": ping\n\n"), 25_000);
@@ -164,6 +175,37 @@ const server = createServer(async (req, res) => {
         : json(res, 404, { error: "no such conversation" });
     }
 
+    // --- the Hall of Doors: MCP servers and skills -------------------------
+    if (path === "/api/hall" && method === "GET") {
+      return json(res, 200, hall.snapshot());
+    }
+    if (path === "/api/hall/check" && method === "POST") {
+      hall.look();
+      return json(res, 200, { ok: true });
+    }
+    let m = path.match(/^\/api\/mcp\/([^/]+)\/(reconnect|auth)$/);
+    if (m && method === "POST") {
+      const name = decodeURIComponent(m[1]);
+      const result = m[2] === "auth" ? await hall.authenticate(name) : await hall.reconnect(name);
+      return json(res, 200, result);
+    }
+    if (path === "/api/skills" && method === "POST") {
+      const r = hall.createSkill(await readBody(req));
+      return json(res, r.ok ? 200 : r.code, r.ok ? r : { error: r.reason });
+    }
+    m = path.match(/^\/api\/skills\/([0-9a-f]{12})(?:\/(reveal))?$/);
+    if (m && method === "GET" && !m[2]) {
+      const found = hall.readSkill(m[1]);
+      return found ? json(res, 200, found) : json(res, 404, { error: "no such skill" });
+    }
+    if (m && method === "POST" && !m[2]) {
+      const r = hall.saveSkill(m[1], await readBody(req));
+      return json(res, r.ok ? 200 : r.code, r.ok ? r : { error: r.reason });
+    }
+    if (m && method === "POST" && m[2] === "reveal") {
+      return hall.revealSkill(m[1]) ? json(res, 200, { ok: true }) : json(res, 404, { error: "no such skill" });
+    }
+
     // --- empty the archive in one go ---------------------------------------
     if (path === "/api/archive/empty" && method === "POST") {
       const ids = store.all().filter((t) => t.closedAt).map((t) => t.id);
@@ -184,7 +226,7 @@ const server = createServer(async (req, res) => {
     }
 
     // --- answer an outstanding permission / question -----------------------
-    let m = path.match(/^\/api\/pending\/([^/]+)$/);
+    m = path.match(/^\/api\/pending\/([^/]+)$/);
     if (m && method === "POST") {
       const decision = await readBody(req);
       if (decision.behavior !== "allow" && decision.behavior !== "deny") {
@@ -372,11 +414,13 @@ pollAgents(broadcast).catch(() => {});
 resumeWatching(broadcast);
 
 slack.start();
+hall.start();
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     clearInterval(poller);
     slack.stop();
+    hall.stop();
     stopAllWatching();
     sessions.shutdown();
     server.close(() => process.exit(0));

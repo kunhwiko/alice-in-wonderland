@@ -1,10 +1,13 @@
 // Wonderland, in three dimensions.
 //
-// A garden with a croquet lawn at its heart, and two districts off it:
+// A garden with a croquet lawn at its heart, and three districts off it:
 //   - the Mad Hatter's Tea Party, where Slack conversations waiting on you
 //     float above the table as letters;
 //   - the Queen's Court, where sessions are card soldiers — the ones waiting
-//     on your decision line up before the throne under a red heart.
+//     on your decision line up before the throne under a red heart;
+//   - the Hall of Doors, behind the lawn, where each MCP server is a door —
+//     open, locked, or stuck — and your skills are the bottles on the glass
+//     table.
 // Alice wanders the lawn. Give her an errand and she walks to the district it
 // belongs to and says what she found.
 //
@@ -18,13 +21,15 @@ import { SUITS } from "/ui.js";
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
-/** Where things are. The lawn is the hub; districts sit either side of it. */
+/** Where things are. The lawn is the hub; districts sit either side of it, and behind. */
 const PLAZA = V(0, 0, 5);
 const PLAZA_R = 6.5;
 const DISTRICTS = {
   tea: { anchor: V(-15, 0, 0), door: V(-10.2, 0, 3.6), sign: 6.6 },
   court: { anchor: V(15, 0, -1), door: V(10.2, 0, 3.6), sign: 6.2 },
+  hall: { anchor: V(0, 0, -17), door: V(0, 0, -9.4), sign: 6.4 },
 };
+const KEYS = Object.keys(DISTRICTS);
 
 const PALETTE = {
   skyTop: 0x8fb8e8, skyHorizon: 0xfbe9d2,
@@ -163,7 +168,7 @@ function pathStrip(scene, a, b, { width = 1.8, material }) {
 }
 
 function buildPaths(scene) {
-  for (const key of ["tea", "court"]) {
+  for (const key of KEYS) {
     const door = DISTRICTS[key].door;
     const from = PLAZA.clone().add(door.clone().sub(PLAZA).setY(0).normalize().multiplyScalar(PLAZA_R - 0.3));
     const into = door.clone().add(DISTRICTS[key].anchor.clone().sub(door).normalize().multiplyScalar(2.5));
@@ -178,6 +183,9 @@ function buildPaths(scene) {
       tex.repeat.set(2, Math.round(len / 0.9));
       tex.magFilter = THREE.NearestFilter;
       pathStrip(scene, from, into, { width: 1.8, material: new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }) });
+    } else if (key === "hall") {
+      // flagstones, as befits a hall
+      pathStrip(scene, from, into, { width: 1.7, material: mat(PALETTE.stone, { roughness: 0.9 }) });
     } else {
       pathStrip(scene, from, into, { width: 1.9, material: mat(PALETTE.path, { roughness: 1 }) });
     }
@@ -259,9 +267,10 @@ function cheshire() {
   return g;
 }
 
-/** The great tree behind the lawn, with the Cat in it. */
+/** The great tree off the back of the lawn, with the Cat in it. */
 function buildCentre(scene, rand) {
-  const x = 0, z = -6;
+  // Set to one side, so the way to the Hall is clear.
+  const x = -8, z = -6.5;
   const g = new THREE.Group();
   g.position.set(x, 0, z);
   const trunk = new THREE.LatheGeometry(
@@ -280,8 +289,8 @@ function buildCentre(scene, rand) {
   cat.position.set(x + 2.6, 5.6, z + 1.8);
   scene.add(cat);
 
-  for (const [mx, mz, s, c] of [[-3.2, -3.6, 1.5, PALETTE.heart], [3.4, -3.2, 1.1, PALETTE.chesh], [-1.6, -9.5, 2.2, PALETTE.heart],
-    [4.5, -8.5, 1.8, 0xe08a2e], [-5.5, -6, 1.2, PALETTE.chesh], [6.5, 9.5, 0.9, PALETTE.heart], [-7, 11, 1.1, 0xe08a2e]]) {
+  for (const [mx, mz, s, c] of [[-3.2, -3.6, 1.5, PALETTE.heart], [3.4, -3.2, 1.1, PALETTE.chesh], [-4.2, -9.5, 1.6, PALETTE.heart],
+    [5.5, -7.5, 1.8, 0xe08a2e], [-11.5, -9, 1.2, PALETTE.chesh], [6.5, 9.5, 0.9, PALETTE.heart], [-7, 11, 1.1, 0xe08a2e]]) {
     mushroom(scene, mx, mz, s, c);
   }
 
@@ -306,7 +315,7 @@ function buildOutskirts(scene, rand) {
     const a = rand() * Math.PI * 2, r = 18 + rand() * 12;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (z > 8 && Math.abs(x) < 22) continue;
-    if (Math.hypot(x - DISTRICTS.tea.anchor.x, z) < 8 || Math.hypot(x - DISTRICTS.court.anchor.x, z + 1) < 9) continue;
+    if (KEYS.some((k) => Math.hypot(x - DISTRICTS[k].anchor.x, z - DISTRICTS[k].anchor.z) < 9)) continue;
     mushroom(scene, x, z, 0.5 + rand() * 1.2, [PALETTE.heart, PALETTE.chesh, 0xe08a2e][i % 3]);
   }
 }
@@ -604,6 +613,182 @@ function soldierSpot(kind, i) {
   return { x, z, rot };
 }
 
+/* ========================================================= hall of doors */
+
+const DOOR_LOOK = {
+  connected: { panel: 0x5d9c6c, light: 0xffe9a8, open: -1.15 },
+  "needs-auth": { panel: 0x7d4a8e, light: 0x2a1f2e, open: 0 },
+  failed: { panel: 0xa3343c, light: 0x2a1f2e, open: -0.12 },
+  pending: { panel: 0xd29b1e, light: 0x5a4630, open: -0.3 },
+  disabled: { panel: 0x9a948c, light: 0x2a1f2e, open: 0 },
+};
+/** A bottle's glass, by where the skill comes from. */
+const BOTTLE_GLASS = { user: 0xf28ab2, project: 0x6fb0f0, plugin: 0x7cc47a, synced: 0xf0b84a };
+
+/** The little golden key, as found on the glass table. */
+function goldenKey(gold) {
+  const k = new THREE.Group();
+  k.add(mesh(new THREE.TorusGeometry(0.15, 0.045, 8, 18), gold, [-0.32, 0, 0], { cast: false }));
+  k.add(mesh(new THREE.BoxGeometry(0.5, 0.06, 0.06), gold, [0.02, 0, 0], { cast: false }));
+  k.add(mesh(new THREE.BoxGeometry(0.06, 0.14, 0.06), gold, [0.22, -0.08, 0], { cast: false }));
+  k.add(mesh(new THREE.BoxGeometry(0.06, 0.1, 0.06), gold, [0.12, -0.06, 0], { cast: false }));
+  return k;
+}
+
+/**
+ * A door, facing +z: a gilt frame, the doorway behind it (lit when the door's
+ * open), and the door itself on a hinge. A padlock and a floating key for one
+ * that wants signing into; boards for one that's switched off.
+ */
+function hallDoor(gold) {
+  const g = new THREE.Group();
+  for (const x of [-0.56, 0.56]) g.add(mesh(new THREE.BoxGeometry(0.14, 2.3, 0.2), gold, [x, 1.15, 0]));
+  g.add(mesh(new THREE.BoxGeometry(1.26, 0.16, 0.2), gold, [0, 2.35, 0]));
+  const light = new THREE.MeshStandardMaterial({ color: 0x2a1f2e, emissive: 0x000000, roughness: 1 });
+  g.add(mesh(new THREE.PlaneGeometry(0.98, 2.2), light, [0, 1.1, -0.06], { cast: false }));
+
+  const panelMat = mat(0x7d4a8e, { flatShading: false, roughness: 0.6 });
+  const hinge = new THREE.Group();
+  hinge.position.set(-0.49, 0, 0.02);
+  hinge.add(mesh(new THREE.BoxGeometry(0.98, 2.2, 0.07), panelMat, [0.49, 1.1, 0]));
+  // two raised panels, and a knob
+  for (const y of [0.6, 1.6]) hinge.add(mesh(new THREE.BoxGeometry(0.7, 0.75, 0.03), panelMat, [0.49, y, 0.045], { cast: false }));
+  hinge.add(mesh(new THREE.SphereGeometry(0.06, 10, 8), gold, [0.86, 1.05, 0.07], { cast: false }));
+  g.add(hinge);
+
+  const lock = new THREE.Group();
+  lock.position.set(0.49, 1.05, 0.08);
+  lock.add(mesh(new THREE.BoxGeometry(0.26, 0.22, 0.08), gold, [0, 0, 0], { cast: false }));
+  lock.add(mesh(new THREE.TorusGeometry(0.085, 0.022, 6, 14, Math.PI), gold, [0, 0.11, 0], { cast: false }));
+  hinge.add(lock);
+
+  const boards = new THREE.Group();
+  const wood = mat(0x8a6040);
+  for (const r of [0.55, -0.55]) boards.add(mesh(new THREE.BoxGeometry(1.25, 0.16, 0.05), wood, [0, 1.15, 0.12], { rot: [0, 0, r] }));
+  g.add(boards);
+
+  const keyMat = new THREE.MeshStandardMaterial({ color: PALETTE.gold, metalness: 0.7, roughness: 0.3, emissive: 0x6a4a08, emissiveIntensity: 0.6 });
+  const key = goldenKey(keyMat);
+  key.position.set(0, 3.05, 0.35);
+  g.add(key);
+
+  // a red glow at the foot of a stuck door
+  const warn = mesh(new THREE.CircleGeometry(0.9, 24), new THREE.MeshBasicMaterial({ color: 0xff5a5a, transparent: true, opacity: 0, depthWrite: false }),
+    [0, 0.02, 0.6], { rot: [-Math.PI / 2, 0, 0], cast: false });
+  g.add(warn);
+
+  g.userData = { light, panelMat, hinge, lock, boards, key, warn };
+  return g;
+}
+
+/** A "DRINK ME" bottle: coloured glass, a paper label, a cork. */
+function bottle() {
+  const g = new THREE.Group();
+  const glass = new THREE.MeshStandardMaterial({ color: 0xf28ab2, transparent: true, opacity: 0.78, roughness: 0.15, metalness: 0.05 });
+  const body = new THREE.LatheGeometry(
+    [[0, 0], [0.11, 0], [0.12, 0.04], [0.12, 0.2], [0.07, 0.28], [0.04, 0.33], [0.042, 0.4]].map(([r, y]) => new THREE.Vector2(r, y)), 14);
+  g.add(mesh(body, glass));
+  g.add(mesh(new THREE.CylinderGeometry(0.124, 0.124, 0.08, 14, 1, true), mat(PALETTE.cream, { side: THREE.DoubleSide }), [0, 0.13, 0], { cast: false }));
+  g.add(mesh(new THREE.CylinderGeometry(0.036, 0.032, 0.08, 8), mat(0xb88a5a), [0, 0.43, 0], { cast: false }));
+  g.userData.glass = glass;
+  return g;
+}
+
+/** Where the doors stand: along the back wall, the first in the middle. */
+const DOOR_SLOTS = 9;
+const WALL_R = 6.2;
+function doorAngle(slot) {
+  const order = [4, 3, 5, 2, 6, 1, 7, 0, 8][slot];
+  return Math.PI + 0.45 + (order / (DOOR_SLOTS - 1)) * (Math.PI - 0.9);
+}
+
+function buildHall(scene) {
+  const H = DISTRICTS.hall.anchor;
+  const g = new THREE.Group();
+  g.position.copy(H);
+  g.userData.district = "hall";
+  scene.add(g);
+
+  // a floor of lilac and cream, as on the far side of the looking-glass
+  const tiles = canvasTexture(256, 256, (c, w, h) => {
+    const n = 8;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      c.fillStyle = (i + j) % 2 ? "#fbf6e9" : "#c9b6dc";
+      c.fillRect((i * w) / n, (j * h) / n, w / n + 1, h / n + 1);
+    }
+  });
+  g.add(mesh(new THREE.CylinderGeometry(6.4, 6.6, 0.22, 48), [
+    mat(0xe8dcef), new THREE.MeshStandardMaterial({ map: tiles, roughness: 0.6 }), mat(0xe8dcef),
+  ], [0, 0.11, 0], { receive: true }));
+
+  // the wall the doors are set in, curving round the back
+  const plaster = mat(0xf6e7f0, { roughness: 0.9 });
+  const trim = mat(PALETTE.cheshSoft);
+  const n = 14;
+  for (let i = 0; i <= n; i++) {
+    const a = Math.PI + 0.1 + (i / n) * (Math.PI - 0.2);
+    const pos = [Math.cos(a) * (WALL_R + 0.35), 0, Math.sin(a) * (WALL_R + 0.35)];
+    const rot = [0, -a + Math.PI / 2, 0];
+    g.add(mesh(new THREE.BoxGeometry(1.5, 4.4, 0.3), plaster, [pos[0], 2.42, pos[2]], { rot, receive: true }));
+    g.add(mesh(new THREE.BoxGeometry(1.56, 0.22, 0.42), trim, [pos[0], 4.66, pos[2]], { rot, cast: false }));
+  }
+
+  const gold = new THREE.MeshStandardMaterial({ color: PALETTE.gold, metalness: 0.6, roughness: 0.35 });
+  const doors = [];
+  for (let i = 0; i < DOOR_SLOTS; i++) {
+    const a = doorAngle(i);
+    const d = hallDoor(gold);
+    d.position.set(Math.cos(a) * WALL_R, 0.22, Math.sin(a) * WALL_R);
+    d.rotation.y = Math.atan2(-Math.cos(a), -Math.sin(a));
+    d.visible = false;
+    g.add(d);
+    doors.push(d);
+  }
+
+  // the little three-legged table, all made of solid glass
+  const glass = new THREE.MeshStandardMaterial({ color: 0xdff3ff, transparent: true, opacity: 0.4, roughness: 0.05, metalness: 0.1 });
+  const table = new THREE.Group();
+  table.position.set(0, 0.22, 1.6);
+  table.add(mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.07, 36), glass, [0, 1.05, 0], { cast: false }));
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    table.add(mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.05, 8), glass, [Math.cos(a) * 0.85, 0.52, Math.sin(a) * 0.85], { cast: false }));
+  }
+  const key = goldenKey(gold);
+  key.position.set(0.15, 1.12, 0.75);
+  key.rotation.set(-Math.PI / 2, 0, 0.5);
+  key.scale.setScalar(0.6);
+  table.add(key);
+  g.add(table);
+
+  // Bottles: a fixed pool on the table top, two rings of them.
+  const bottles = [];
+  for (let i = 0; i < 16; i++) {
+    const b = bottle();
+    const inner = i < 5;
+    const a = inner ? (i / 5) * Math.PI * 2 : ((i - 5) / 11) * Math.PI * 2 + 0.3;
+    const r = inner ? 0.42 : 0.98;
+    b.position.set(Math.cos(a) * r, 1.09, Math.sin(a) * r);
+    b.scale.setScalar(1.35);
+    b.visible = false;
+    table.add(b);
+    bottles.push(b);
+  }
+
+  // lamps either side of the way in
+  for (const x of [-2.9, 2.9]) {
+    g.add(mesh(new THREE.CylinderGeometry(0.07, 0.1, 3, 8), gold, [x, 1.72, 5.2]));
+    g.add(mesh(new THREE.SphereGeometry(0.28, 14, 10), new THREE.MeshStandardMaterial({ color: 0xfff1c8, emissive: 0xffd27a, emissiveIntensity: 0.9 }),
+      [x, 3.4, 5.2], { cast: false }));
+  }
+
+  const glow = mesh(new THREE.CircleGeometry(6, 40), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0, depthWrite: false }),
+    [0, 0.235, 0], { rot: [-Math.PI / 2, 0, 0], cast: false });
+  g.add(glow);
+
+  return { group: g, doors, bottles, glow };
+}
+
 /* ================================================================ world */
 
 export function createWorld({ canvas, overlay, onDistrict, names }) {
@@ -616,7 +801,8 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 900);
-  const HOME = { pos: V(0, 20, 31), target: V(0, 1, 1.5) };
+  // Far enough up and back to see all three districts, the Hall behind the lawn.
+  const HOME = { pos: V(0, 21, 30), target: V(0, 1, -2) };
   camera.position.copy(HOME.pos);
 
   const controls = new OrbitControls(camera, canvas);
@@ -651,6 +837,7 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   buildOutskirts(scene, rand);
   const tea = buildTeaParty(scene);
   const court = buildCourt(scene, rand);
+  const hall = buildHall(scene);
 
   const clouds = [];
   for (let i = 0; i < 9; i++) {
@@ -694,7 +881,7 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   }
 
   const signs = {};
-  for (const key of ["tea", "court"]) {
+  for (const key of KEYS) {
     const d = DISTRICTS[key];
     const l = label(`sign sign-${key}`, d.anchor.clone().setY(d.sign), { onClick: () => onDistrict(key) });
     const name = Object.assign(document.createElement("span"), { className: "sign-name", textContent: names[key] });
@@ -711,6 +898,10 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
     l.soldier = s;
     return l;
   });
+
+  /** Names over the doors that won't open. The doors don't move, so neither do these. */
+  hall.group.updateMatrixWorld(true); // nothing's been drawn yet to work out where they are
+  const doorTags = hall.doors.map((d) => label("tag tag-door", d.getWorldPosition(new THREE.Vector3()).add(V(0, 3.6, 0)), { shown: false }));
 
   const v = new THREE.Vector3();
   function placeLabels() {
@@ -730,8 +921,43 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   /* --- what's in each district ------------------------------------------ */
   let teaCount = 0;
   let courtWaiting = 0;
+  let hallShut = 0;
 
-  function update({ tea: teaState, court: courtState }) {
+  /** Doors and bottles: one door per MCP server, one bottle per skill. */
+  function updateHall({ servers = [], skills = [] } = {}) {
+    const doors = [...servers].sort((a, b) => a.name.localeCompare(b.name));
+    hallShut = 0;
+    hall.doors.forEach((d, i) => {
+      const s = doors[i];
+      const tag = doorTags[i];
+      d.visible = Boolean(s);
+      if (!s) { tag.node.hidden = true; return; }
+      const look = DOOR_LOOK[s.status] ?? DOOR_LOOK.pending;
+      const u = d.userData;
+      u.status = s.status;
+      u.panelMat.color.setHex(look.panel);
+      u.light.color.setHex(look.light);
+      u.light.emissive.setHex(s.status === "connected" ? 0xffd27a : 0x000000);
+      u.hinge.rotation.y = look.open;
+      u.lock.visible = s.status === "needs-auth";
+      u.key.visible = s.status === "needs-auth";
+      u.boards.visible = s.status === "disabled";
+      const shut = s.status === "needs-auth" || s.status === "failed";
+      if (shut) hallShut++;
+      tag.node.hidden = !shut;
+      tag.node.textContent = s.name;
+    });
+    hall.bottles.forEach((b, i) => {
+      const k = skills[i];
+      b.visible = Boolean(k);
+      if (k) b.userData.glass.color.setHex(BOTTLE_GLASS[k.scope] ?? BOTTLE_GLASS.user);
+    });
+    signs.hall.count.textContent = hallShut ? String(hallShut) : "";
+    signs.hall.node.classList.toggle("has-items", hallShut > 0);
+  }
+
+  function update({ tea: teaState, court: courtState, hall: hallState }) {
+    updateHall(hallState);
     const waiting = teaState?.items ?? [];
     teaCount = waiting.length;
     tea.letters.forEach((e, i) => {
@@ -878,7 +1104,7 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
         else {
           // Mostly the lawn; now and then a look in on a district that has
           // something waiting, without making an announcement of it.
-          const busy = [teaCount && "tea", courtWaiting && "court"].filter(Boolean);
+          const busy = [teaCount && "tea", courtWaiting && "court", hallShut && "hall"].filter(Boolean);
           const peek = busy.length && Math.random() < 0.25;
           routeTo(peek ? DISTRICTS[busy[Math.floor(Math.random() * busy.length)]].door : wanderSpot());
           state = "walking";
@@ -905,14 +1131,14 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
     // what's left of it by aiming to its right — further, the wider it is.
     const wide = canvas.clientWidth > 900;
     const target = a.clone().add(V(wide ? 11.5 * cover : 0, 1.2, wide ? 0 : 2));
-    shot = { pos: target.clone().add(V(key === "tea" ? 2 : -2, 11, 15)), target };
+    shot = { pos: target.clone().add(V({ tea: 2, court: -2, hall: 0 }[key], 11, 15)), target };
   }
   controls.addEventListener("start", () => { shot = null; });
 
   /* --- pointing at things ------------------------------------------------ */
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
-  const districtGroups = [tea.group, court.group];
+  const districtGroups = [tea.group, court.group, hall.group];
   function districtAt(e) {
     const r = canvas.getBoundingClientRect();
     pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -997,6 +1223,19 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
     tea.glow.material.opacity = teaCount ? 0.22 + Math.sin(clock * 2) * 0.06 * m : 0;
     tea.hat.rotation.y = Math.sin(clock * 0.4) * 0.3 * m;
     court.glow.material.opacity = courtWaiting ? 0.2 + Math.sin(clock * 2.6) * 0.08 * m : 0;
+    hall.glow.material.opacity = hallShut ? 0.16 + Math.sin(clock * 2.2) * 0.06 * m : 0;
+    hall.doors.forEach((d, i) => {
+      if (!d.visible) return;
+      const u = d.userData;
+      if (u.key.visible) {
+        // the key that would open it, turning in the air
+        u.key.position.y = 3.05 + Math.sin(clock * 2 + i) * 0.12 * m;
+        u.key.rotation.y = clock * 1.4 * m;
+      }
+      u.warn.material.opacity = u.status === "failed" ? 0.3 + Math.sin(clock * 3 + i) * 0.15 * m : 0;
+      u.panelMat.emissive.setHex(u.status === "pending" ? 0x3a2a08 : 0x000000);
+      u.panelMat.emissiveIntensity = u.status === "pending" ? 0.5 + Math.sin(clock * 5) * 0.5 * m : 1;
+    });
     court.soldiers.forEach((s, i) => {
       if (!s.visible) return;
       const h = s.userData.heart;

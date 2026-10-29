@@ -40,6 +40,7 @@ const ids = [
   "new-dismiss", "favicon", "new-name-label", "new-model-label", "new-model", "title",
   "world", "overlay", "no-world", "go-tea", "go-court", "panel", "panel-title", "panel-hint",
   "panel-close", "tea", "court", "tea-status", "tea-list", "panel-expand", "panel-grip",
+  "go-hall", "hall", "hall-status", "hall-doors", "hall-bottles",
 ];
 const nodes = Object.fromEntries(ids.map((i) => [i, mk()]));
 const missing = new Set();
@@ -376,6 +377,24 @@ if (world.errands.length !== n + 1 || toTea.district !== "tea" || !toTea.text.in
 n = world.errands.length;
 send({ type: "slack", slack: { ...slack, items: [...slack.items, slackItem("ccc", true, { from: "Ajay" })] } });
 if (world.errands.length !== n) fail("the same letter sent Alice walking twice");
+
+// The Hall: a door that shuts is a walk there; one you're signing into isn't,
+// and one that stays shut isn't news twice.
+const door = (name, status, extra = {}) => ({ name, status, source: "user", transport: "http", host: null, tools: 0, busy: null, signIn: null, error: null, ...extra });
+const skills = [{ id: "aaaaaaaaaaaa", name: "mine", description: "d", scope: "user", where: null, editable: true, path: "/x/SKILL.md", dir: "/x", files: [], modifiedAt: 1 }];
+n = world.errands.length;
+send({ type: "hall", hall: { enabled: true, checkedAt: Date.now(), error: null, skills, servers: [door("wiki", "connected"), door("jira", "needs-auth", { busy: "signing-in" })] } });
+if (world.errands.length !== n) fail(`a door being signed into sent Alice walking: ${JSON.stringify(world.errands.at(-1))}`);
+send({ type: "hall", hall: { enabled: true, checkedAt: Date.now(), error: null, skills, servers: [door("wiki", "connected"), door("jira", "needs-auth")] } });
+const toHall = world.errands.at(-1);
+if (world.errands.length !== n + 1 || toHall.district !== "hall" || !toHall.text.includes("jira")) {
+  fail(`a locked door didn't send Alice to the Hall; got ${JSON.stringify(toHall)}`);
+}
+send({ type: "hall", hall: { enabled: true, checkedAt: Date.now(), error: null, skills, servers: [door("wiki", "connected"), door("jira", "needs-auth")] } });
+if (world.errands.length !== n + 1) fail("a door still locked sent Alice walking again");
+const hallUpdate = world.updates.at(-1)?.hall;
+if (hallUpdate?.servers?.length !== 2 || hallUpdate?.skills?.length !== 1) fail(`the world wasn't told about the Hall: ${JSON.stringify(hallUpdate)}`);
+if (!created.some((n) => n.textContent === alice.authenticate)) fail("a locked door has no Sign in button");
 
 console.log(
   `PASS: app.js ran; ${heads.length} cards, decree (${decrees.length} nodes), ` +

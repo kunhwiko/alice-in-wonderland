@@ -436,6 +436,17 @@ export function createSessionManager({ broadcast, briefer = null }) {
     },
 
     /**
+     * Try an MCP server again in every running session — after a sign-in in
+     * the Hall, say. A session that doesn't have that server just refuses.
+     * Returns how many sessions were asked.
+     */
+    async reconnectMcp(name) {
+      const running = [...live.values()];
+      await Promise.all(running.map(({ q }) => q.reconnectMcpServer(name).catch(() => {})));
+      return running.length;
+    },
+
+    /**
      * Close the window between "Wonderland let go" and "the terminal took
      * hold". Held by the handover route across the stop and the AppleScript,
      * and released either way — on success the card is `external` by then,

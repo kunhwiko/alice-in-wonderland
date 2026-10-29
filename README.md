@@ -2,12 +2,14 @@
 
 A localhost Wonderland, tended by Alice, where the things waiting on you live.
 
-It's a small 3D garden. Off the croquet lawn are two districts:
+It's a small 3D garden. Off the croquet lawn are three districts:
 
 - **The Tea Party**: Slack DMs and threads waiting on your reply, as letters
   floating over the Mad Hatter's table.
 - **The Queen's Court**: your Claude Code sessions, as card soldiers. The ones
   waiting on your word stand before the throne under a red heart.
+- **The Hall of Doors**: your MCP servers, as doors — open, locked (wants a
+  sign-in) or stuck — and your skills, as the bottles on the glass table.
 
 Alice wanders the lawn. When something new turns up she walks to the district
 it belongs to and tells you. Click a district (or its button) and a panel opens
@@ -62,6 +64,8 @@ testable:
 - **Tea Party news** is a conversation Alice has read and judged to want you.
   Not before she's read it, or she'd walk over about every "thanks!" and then
   set it aside.
+- **Hall news** is a door that shuts: a server that wants signing into, or
+  won't connect. Once per door and state, and not while you're signing in.
 - Everything already waiting when the page opens is a baseline, not news, but
   she starts by walking to the oldest of it. News arriving together is grouped
   into one walk per district.
@@ -109,6 +113,40 @@ default.
 | `WONDERLAND_SLACK_MCP_URL` | — | **required** with Slack on: the URL of the MCP server with the Slack tools |
 | `WONDERLAND_SLACK_MCP` | `conduit` | the name that server's tools go by |
 | `WONDERLAND_BRIEFINGS` | on | `off` also skips the Slack verdicts (everything is listed) |
+
+## The Hall of Doors (MCP servers and skills)
+
+`server/hall.js` keeps one quiet CLI of its own, the *steward*: an Agent SDK
+query that never gets a prompt, so it holds MCP connections without running a
+turn. It loads your user, project and local settings (that's where servers are
+configured) with `disableAllHooks`, or Wonderland's own hooks would report it
+as a terminal session. It runs in your home directory, so a server configured
+only in one project's `.mcp.json` isn't among the doors.
+
+- **Sign in** sends `mcp_authenticate` (in the SDK, not yet in its types). For
+  an OAuth server the steward starts the flow and listens on localhost for the
+  browser's callback; for a claude.ai connector it hands back the claude.ai
+  page, and the Hall keeps trying the door until it opens. Either way the
+  sign-in is stored where every session finds it.
+- **Reconnect** reconnects the steward, and every session Wonderland runs
+  itself. A terminal session that's already open keeps its own connections;
+  it notices with `/mcp`. There's no reaching into it from here (see below).
+
+Skills are read from disk: `~/.claude/skills` (yours), each project's
+`.claude/skills` for every project `~/.claude.json` remembers, installed
+plugins, and the ones synced from claude.ai. Yours and your projects' can be
+edited in the panel or made new; a plugin's or claude.ai's are read-only,
+since their next update would overwrite an edit. A save is refused if the file
+changed on disk since you opened it.
+
+| Env | Default | |
+|---|---|---|
+| `WONDERLAND_HALL` | on | `off` turns the steward off (skills are still listed) |
+| `WONDERLAND_HALL_POLL_MS` | 60000 | how often to look at the doors |
+
+Every POST is refused if it comes from a page on another origin: a website you
+visit can send requests to 127.0.0.1 too, and here one could start a session or
+rewrite a skill. Hooks and `curl` send no Origin, and are let through.
 
 ## Why it works this way
 
@@ -243,6 +281,7 @@ server/
   transcript.js   read-only tail of a session's JSONL
   briefing.js     Alice's per-card briefings (Haiku, one shot)
   slack.js        the Tea Party: Slack via mcp_call, triage, verdicts
+  hall.js         the Hall of Doors: the MCP steward, skills on disk
   terminal.js     open a session in iTerm2 / Terminal.app
   voice.js        Alice's voice, appended to owned sessions' system prompt
 public/
@@ -252,6 +291,7 @@ public/
   attention.js    what's waiting, and which of it is news (no DOM)
   court.js        the Queen's Court panel: desk, cards, archive
   teaparty.js     the Tea Party panel: Slack conversations
+  hall.js         the Hall of Doors panel: doors and bottles
   ui.js           small DOM helpers
   alice.js        every string Alice says, in one object
 data/             todos.json, slack.json (gitignored)
