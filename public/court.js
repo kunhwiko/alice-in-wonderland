@@ -629,17 +629,18 @@ function askTerminal(todo) {
   const why = (label, text) => el("p", {}, el("b", { textContent: label }), ` — ${text}`);
 
   document.getElementById("terminal-title").textContent = alice.terminalTitle;
-  // A terminal session can't be moved: it's already in one.
-  document.getElementById("terminal-why").replaceChildren(
+  // A terminal session can't be moved: it's already in one. Filtered, since
+  // replaceChildren prints a null as "null" where el() would skip it.
+  document.getElementById("terminal-why").replaceChildren(...[
     el("p", { textContent: owned ? alice.terminalWhyOwned : alice.terminalWhyExternal }),
     owned ? why(alice.moveIt, alice.moveItWhy) : null,
-    why(alice.forkIt, alice.forkItWhy)
-  );
-  document.getElementById("terminal-choices").replaceChildren(
+    why(alice.forkIt, alice.forkItWhy),
+  ].filter(Boolean));
+  document.getElementById("terminal-choices").replaceChildren(...[
     choice(alice.neverMind, "ghost"),
     choice(alice.forkIt, owned ? "" : "primary", () => openTerminal(todo, true)),
-    owned ? choice(alice.moveIt, "primary", () => handover(todo)) : null
-  );
+    owned ? choice(alice.moveIt, "primary", () => handover(todo)) : null,
+  ].filter(Boolean));
   $termDialog.showModal();
 }
 

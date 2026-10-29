@@ -13,7 +13,7 @@ import {
   ingestHook, pollAgents, stopExternal,
   startWatching, stopWatching, stopAllWatching, resumeWatching,
 } from "./external.js";
-import { openInTerminal, resumeCommandFor, isSessionLive } from "./terminal.js";
+import { openInTerminal, resumeCommandFor, isSessionLive, DEAD_STATUSES } from "./terminal.js";
 import { findTranscript, readEvents } from "./transcript.js";
 import { createSlackWatcher } from "./slack.js";
 import { createHall } from "./hall.js";
@@ -24,8 +24,6 @@ const PUBLIC = join(ROOT, "public");
 const VENDOR = { "/vendor/three/": join(ROOT, "node_modules", "three") };
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT ?? 7777);
-// Statuses with no session behind them any more, as court.js has them too.
-const DEAD = ["stopped", "gone", "failed", "interrupted"];
 
 /* ---------------------------------------------------------------- SSE hub */
 
@@ -304,7 +302,7 @@ const server = createServer(async (req, res) => {
       if (action === "stop") {
         // One that has already ended is only put away. A dead terminal
         // session's pid may belong to something else by now.
-        const ended = DEAD.includes(todo.status);
+        const ended = DEAD_STATUSES.includes(todo.status);
         let result = { ok: true, how: "already ended" };
         if (!ended) {
           result = todo.kind === "owned" ? await sessions.stop(id) : await stopExternal(todo);

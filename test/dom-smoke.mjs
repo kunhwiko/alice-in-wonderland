@@ -239,9 +239,16 @@ if (!heads.length) {
 // its children would find them all closed again.
 // Open in a terminal asks before a fork, so each click either fills the
 // dialog's choices or posts straight away. Both are recorded.
+// A real replaceChildren prints a null as the text "null", so none may arrive.
 const asked = [];
-nodes["terminal-choices"].replaceChildren = (...kids) =>
-  asked.push(kids.filter(Boolean));
+let nullKid = false;
+nodes["terminal-choices"].replaceChildren = (...kids) => {
+  if (kids.some((k) => k == null)) nullKid = true;
+  asked.push(kids);
+};
+nodes["terminal-why"].replaceChildren = (...kids) => {
+  if (kids.some((k) => k == null)) nullKid = true;
+};
 let subHeadCount = 0;
 let terminalClicks = 0;
 for (const head of heads) {
@@ -292,6 +299,7 @@ if (!created.some((n) => n.textContent === alice.stop)) {
 // page asks: an owned one can move or fork, a terminal one can only fork.
 // One with nothing running just goes, and an owned one goes by handover.
 if (!terminalClicks) fail("no Open in a terminal button on any card");
+if (nullKid) fail("the terminal dialog was handed a null, which the page prints as \"null\"");
 const labels = (kids) => kids.map((k) => k.textContent).join("|");
 const both = [alice.neverMind, alice.forkIt, alice.moveIt].join("|");
 const forkOnly = [alice.neverMind, alice.forkIt].join("|");
