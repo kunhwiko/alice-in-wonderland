@@ -189,6 +189,81 @@ try {
   await broken.check();
   check("a Slack error is surfaced on the snapshot", /401/.test(broken.snapshot().error ?? ""), broken.snapshot().error);
   check("a check broadcasts before and after", events.filter((e) => e.type === "slack").length >= 2);
+
+  /* A look that couldn't read a thread mustn't forget what it knew about it:
+     the bookkeeping is keyed by conversation, and "missing from this look"
+     is not the same as "over and done with". */
+  const mention = (over) => hit({
+    channel_id: "C1", channel_name: "infra", message_ts: "100.0",
+    content: `<@${ME}> can you review?`,
+    permalink: "https://x.slack.com/archives/C1/p100?thread_ts=100.0&cid=C1", ...over,
+  });
+  let mentions = [mention({})];
+  let threadsFail = false;
+  let reads = 0;
+  const flaky = createSlackWatcher({
+    broadcast() {},
+    open: () => ({
+      async call(tool, args) {
+        if (tool === "get-current-user") return { authContext: { user_id: ME } };
+        if (tool === "search") {
+          if (args.channelTypes === "im,mpim" || args.query.startsWith("from:")) return [];
+          return mentions;
+        }
+        if (tool === "get-thread-replies") {
+          if (threadsFail) throw new Error("rate limited");
+          return { messages: [{ user: "UNB", ts: "100.0", text: `<@${ME}> can you review?` }] };
+        }
+        return {};
+      },
+      close() {},
+    }),
+    judge: async () => { reads++; return "Needs you: yes\nA review."; },
+    file: join(dir, "flaky.json"), enabled: true, verdicts: true,
+  });
+
+  await flaky.check();
+  await new Promise((r) => setTimeout(r, 20));
+  check("the watcher lists the waiting thread", flaky.snapshot().items.length === 1, JSON.stringify(flaky.snapshot().items));
+  flaky.done(flaky.snapshot().items[0].id);
+
+  threadsFail = true;
+  await flaky.check();
+  check("a thread that won't load is counted", /1 thread/.test(flaky.snapshot().error ?? ""), flaky.snapshot().error);
+
+  threadsFail = false;
+  await flaky.check();
+  await new Promise((r) => setTimeout(r, 20));
+  check("done survives a thread that couldn't be read", flaky.snapshot().items.length === 0,
+    JSON.stringify(flaky.snapshot().items));
+  check("and the verdict survives it too", reads === 1, `judged ${reads} times`);
+
+  // Same again for a thread pushed past MAX_THREADS: never fetched, so this
+  // look knows nothing about it either.
+  mentions = [
+    mention({}),
+    ...Array.from({ length: 30 }, (_, n) => mention({
+      channel_id: `C${n + 2}`, message_ts: `${900 + n}.0`,
+      permalink: `https://x.slack.com/archives/C${n + 2}/p9?thread_ts=${900 + n}.0&cid=C${n + 2}`,
+    })),
+  ];
+  await flaky.check();
+  await new Promise((r) => setTimeout(r, 20));
+  mentions = [mention({})];
+  await flaky.check();
+  await new Promise((r) => setTimeout(r, 20));
+  check("done survives a thread crowded out by the cap", flaky.snapshot().items.length === 0,
+    JSON.stringify(flaky.snapshot().items));
+
+  // A conversation that really is gone still lets go.
+  mentions = [];
+  await flaky.check();
+  await new Promise((r) => setTimeout(r, 20));
+  mentions = [mention({})];
+  await flaky.check();
+  await new Promise((r) => setTimeout(r, 20));
+  check("a conversation that aged out and came back is read afresh", flaky.snapshot().items.length === 1 && reads > 1,
+    `${flaky.snapshot().items.length} item(s), judged ${reads} times`);
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

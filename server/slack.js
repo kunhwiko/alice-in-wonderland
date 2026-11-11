@@ -306,7 +306,12 @@ export async function gather(slack, { me, names = {}, days = LOOKBACK_DAYS, now 
   ]);
   learnNames([...dms, ...mentions, ...mine], names);
 
-  const cands = threadCandidates({ mentions, mine }).slice(0, MAX_THREADS);
+  const ranked = threadCandidates({ mentions, mine });
+  const cands = ranked.slice(0, MAX_THREADS);
+  // Threads this look can't speak for. Past the cap they're never fetched at
+  // all; below it the fetch can still fail. Either way their absence from
+  // `items` means "not read", not "not waiting".
+  const unread = new Set(ranked.slice(MAX_THREADS).map((c) => itemId(c.key)));
   const threads = await pool(cands, 4, (c) =>
     slack.call("get-thread-replies", {
       channel: c.channelId, threadTs: c.threadTs,
@@ -331,11 +336,15 @@ export async function gather(slack, { me, names = {}, days = LOOKBACK_DAYS, now 
   const items = dmItems(dms, me, { names });
   let failed = 0;
   threads.forEach((res, i) => {
-    if (res?.error) return void failed++;
+    if (res?.error) {
+      failed++;
+      unread.add(itemId(cands[i].key));
+      return;
+    }
     const item = threadItem(cands[i], res?.messages ?? [], me, { names });
     if (item) items.push(item);
   });
-  return { me, items, failedThreads: failed };
+  return { me, items, failedThreads: failed, unread: [...unread] };
 }
 
 /* -------------------------------------------------------------- verdicts */
@@ -471,15 +480,20 @@ export function createSlackWatcher({
     let slack;
     try {
       slack = open();
-      const { me, items, failedThreads } = await gather(slack, { me: state.me, names: state.names });
+      const { me, items, failedThreads, unread } = await gather(slack, { me: state.me, names: state.names });
       state.me = me;
       state.items = items;
       state.checkedAt = Date.now();
       state.error = failedThreads ? `${failedThreads} thread(s) couldn't be read` : null;
-      // Forget the bookkeeping for conversations that have aged out.
+      // Forget the bookkeeping for conversations that have aged out — but only
+      // for ones this look actually read. A conversation it never got to is
+      // missing from `items` too, and pruning that would undo a Done mark and
+      // have Alice judge the whole thread again on the next good look.
       const live = new Set(items.map((i) => i.id));
-      for (const k of Object.keys(state.verdicts)) if (!live.has(k)) delete state.verdicts[k];
-      for (const k of Object.keys(state.done)) if (!live.has(k)) delete state.done[k];
+      const unseen = new Set(unread ?? []);
+      const forget = (k) => !live.has(k) && !unseen.has(k);
+      for (const k of Object.keys(state.verdicts)) if (forget(k)) delete state.verdicts[k];
+      for (const k of Object.keys(state.done)) if (forget(k)) delete state.done[k];
     } catch (err) {
       state.error = String(err?.message ?? err);
     } finally {
