@@ -5,6 +5,7 @@
 import { alice } from "/alice.js";
 import { el, toast, api, SUITS } from "/ui.js";
 import { deskItems, waitingTurn } from "/attention.js";
+import { markdown } from "/markdown.js";
 
 export const todos = new Map();
 const logs = new Map(); // todoId -> [{who, text}]
@@ -66,9 +67,9 @@ function restoreFocus(f) {
   n.setSelectionRange?.(f.start, f.end);
 }
 
-function log(todoId, who, text) {
+function log(todoId, who, text, md = false) {
   if (!logs.has(todoId)) logs.set(todoId, []);
-  logs.get(todoId).push({ who, text });
+  logs.get(todoId).push({ who, text, md });
 }
 
 /**
@@ -77,7 +78,8 @@ function log(todoId, who, text) {
  * that decides how a tool call reads.
  */
 function logEntry(ev) {
-  if (ev.type === "message") return { who: ev.role, text: ev.text };
+  // Claude writes markdown; what you typed is shown as you typed it.
+  if (ev.type === "message") return { who: ev.role, text: ev.text, md: ev.role === "assistant" };
   if (ev.type === "tool") return { who: "assistant", text: `→ ${ev.name}` };
   if (ev.type === "error") return { who: "assistant", text: `error: ${ev.error}` };
   return null;
@@ -321,7 +323,7 @@ function renderLog(todo) {
     logBox.append(
       el("div", { className: `msg ${e.who}` },
         el("div", { className: "who", textContent: e.who }),
-        el("div", { className: "text", textContent: e.text })
+        e.md ? el("div", { className: "text" }, markdown(e.text)) : el("div", { className: "text", textContent: e.text })
       )
     );
   }
@@ -835,7 +837,7 @@ export function ingest(ev) {
   } else {
     const entry = logEntry(ev);
     if (!entry) return false;
-    log(ev.todoId, entry.who, entry.text);
+    log(ev.todoId, entry.who, entry.text, entry.md);
     return ev.todoId === openId;
   }
   return true;

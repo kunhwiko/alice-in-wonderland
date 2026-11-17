@@ -500,6 +500,31 @@ input:focus, textarea:focus, select:focus {
 .msg.user .who  { color: var(--alice-deep); }
 .msg.user .text { color: var(--ink-soft); font-style: italic; }
 
+/* Claude's replies, set as markdown: at the log's own size, tighter than a page. */
+.md { white-space: normal; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md .md-table { margin: 0 0 8px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { font-family: var(--serif); font-weight: 600; line-height: 1.25; margin: 12px 0 5px; color: var(--ink); }
+.md h1 { font-size: 17px; }
+.md h2 { font-size: 15.5px; }
+.md h3 { font-size: 14.5px; }
+.md h4, .md h5, .md h6 { font-size: 13.5px; }
+.md ul, .md ol { padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md li > ul, .md li > ol { margin: 2px 0; }
+.md strong { font-weight: 700; color: var(--ink); }
+.md a { color: var(--alice-deep); text-decoration: underline; text-underline-offset: 2px; }
+.md code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .88em; background: var(--paper-warm); border: 1px solid var(--line-soft); padding: 0 4px; border-radius: 4px; }
+.md pre { white-space: pre; overflow-x: auto; background: var(--paper-warm); border: 1px solid var(--line-soft); border-radius: 6px; padding: 8px 10px; }
+.md pre code { background: none; border: 0; padding: 0; }
+.md blockquote { border-left: 3px solid var(--line); padding-left: 10px; color: var(--ink-soft); }
+.md hr { border: 0; border-top: 1px solid var(--line-soft); margin: 10px 0; }
+.md .md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { border: 1px solid var(--line-soft); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md th { background: var(--paper-warm); font-weight: 600; }
+
 /* -------------------------------------------------------------- subagents */
 
 /* Nested rows, not cards. Subagents can't be resumed, messaged or stopped, so
