@@ -2,7 +2,9 @@
 
 A localhost Wonderland, tended by Alice, where the things waiting on you live.
 
-It's a small 3D garden. Off the croquet lawn are three districts:
+It's a small 3D storybook garden: a stream with a waterfall, stone bridges,
+cobbled paths, the Queen's castle on its hill. Along the paths from Alice's
+clearing are three districts:
 
 - **The Tea Party**: Slack DMs and threads waiting on your reply, as letters
   floating over the Mad Hatter's table.
@@ -11,8 +13,8 @@ It's a small 3D garden. Off the croquet lawn are three districts:
 - **The Hall of Doors**: your MCP servers, as doors — open, locked (wants a
   sign-in) or stuck — and your skills, as the bottles on the glass table.
 
-Alice wanders the lawn. When something new turns up she walks to the district
-it belongs to and tells you. Click a district (or its button) and a panel opens
+Alice wanders her clearing. When something new turns up she walks the path to
+the district it belongs to and tells you. Click a district (or its button) and a panel opens
 where you answer it, instead of cycling through terminal tabs and Slack.
 
 ```bash
@@ -46,9 +48,25 @@ with it and breaks your login everywhere else.
 
 `public/world.js` builds the whole place from three.js primitives at load: no
 models to fetch, no artwork to license. Alice herself is cones and spheres
-(`public/alice-figure.js`). three.js is served from `node_modules` at
+(`public/alice-figure.js`), and so is the Cheshire Cat on the great tree's
+branch (`public/cheshire-figure.js`). He vanishes the way the book has it, tail
+first and grin last, and comes back eyes first; his grin and eyes are painted
+on their own shells over his head so they can stay behind. With reduced motion
+he just stays. three.js is served from `node_modules` at
 `/vendor/three/` (an import map in `index.html`), so there's still no build step
 and no CDN.
+
+The map is `public/layout.js`: where each district, path, bridge and the
+stream are, and the height of the ground. It draws nothing, so
+`test/layout.mjs` can check what has to hold: every route Alice walks stays
+out of the water except over a bridge, each bridge lands on dry banks, and
+nothing stands in the stream. She walks the paths, not across open ground, and
+rises over the bridges' humps.
+
+The look comes from smooth shading, a warm low sun behind the Hall, soft
+shadows, a little bloom and a storybook colour grade (`GRADE` in `world.js`),
+and a meadow of a couple of thousand flowers and grass tufts drawn as
+instances. None of it is tuned for speed yet.
 
 The world only *shows* things. Every decision — Allow, Deny, a reply — is made in
 a panel, where the literal command is on screen. `world.js` is imported
@@ -302,7 +320,9 @@ server/
 public/
   app.js          SSE client, panels, sends Alice on errands
   world.js        the 3D garden, the districts, Alice's walking
+  layout.js       the map: districts, paths, bridges, the stream, the ground
   alice-figure.js Alice, from primitives
+  cheshire-figure.js the Cat on his branch, who vanishes tail first
   attention.js    what's waiting, and which of it is news (no DOM)
   court.js        the Queen's Court panel: desk, cards, archive
   teaparty.js     the Tea Party panel: Slack conversations

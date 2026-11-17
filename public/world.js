@@ -1,39 +1,47 @@
 // Wonderland, in three dimensions.
 //
-// A garden with a croquet lawn at its heart, and three districts off it:
-//   - the Mad Hatter's Tea Party, where Slack conversations waiting on you
-//     float above the table as letters;
-//   - the Queen's Court, where sessions are card soldiers — the ones waiting
-//     on your decision line up before the throne under a red heart;
-//   - the Hall of Doors, behind the lawn, where each MCP server is a door —
-//     open, locked, or stuck — and your skills are the bottles on the glass
-//     table.
-// Alice wanders the lawn. Give her an errand and she walks to the district it
-// belongs to and says what she found.
+// A storybook garden, laid out in layout.js: Alice's clearing at the front,
+// a stream across the middle, and three districts along the paths from it:
+//   - the Mad Hatter's Tea Party, in a glade beside the clearing, where Slack
+//     conversations waiting on you float above the table as letters;
+//   - the Queen's Court, over a bridge, where sessions are card soldiers —
+//     the ones waiting on your decision line up before the throne under a
+//     red heart;
+//   - the Hall of Doors, over the other bridge, where each MCP server is a
+//     door — open, locked, or stuck — and your skills are the bottles on the
+//     glass table.
+// Alice wanders her clearing. Give her an errand and she walks the path to
+// the district it belongs to and says what she found.
 //
 // Everything is built from primitives, here, at load. No models to fetch, no
 // artwork to license. The world only *shows*; deciding things happens in the
 // panels, where the literal request is on screen.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { buildAlice } from "/alice-figure.js";
+import { buildCheshire } from "/cheshire-figure.js";
 import { SUITS } from "/ui.js";
+import {
+  CLEARING, CLEARING_R, DISTRICTS, KEYS, GREAT_TREE, CROQUET, CASTLE,
+  WATER_Y, FALLS, POND, BRIDGES, PATHS, PATH_W,
+  groundHeight, walkHeight, wet, pathDist, meadowClear,
+} from "/layout.js";
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
-/** Where things are. The lawn is the hub; districts sit either side of it, and behind. */
-const PLAZA = V(0, 0, 5);
-const PLAZA_R = 6.5;
-const DISTRICTS = {
-  tea: { anchor: V(-15, 0, 0), door: V(-10.2, 0, 3.6), sign: 6.6 },
-  court: { anchor: V(15, 0, -1), door: V(10.2, 0, 3.6), sign: 6.2 },
-  hall: { anchor: V(0, 0, -17), door: V(0, 0, -9.4), sign: 6.4 },
-};
-const KEYS = Object.keys(DISTRICTS);
-
 const PALETTE = {
-  skyTop: 0x8fb8e8, skyHorizon: 0xfbe9d2,
-  grass: [0x8cc46a, 0x7fb95f, 0x9bcd75, 0x76ad57],
+  skyTop: 0x7fb0e6, skyHorizon: 0xfde3c4, sunGlow: 0xffd9a0,
+  // lush, sunlit, deep, warm
+  grass: [0x86c25f, 0xb4d872, 0x5f9a48, 0xc9cf6a],
+  meadow: 0xd9d49a,
+  bank: 0x9c8a62, streambed: 0x5b6a4e,
   lawnA: "#8fcb69", lawnB: "#7bb956",
   path: 0xe9d7b0, stone: 0xf1e4cf,
   heart: 0xcf1f36, heartDeep: 0xa5142a, gold: 0xd29b1e,
@@ -51,8 +59,37 @@ function rng(seed) {
   };
 }
 
+// Smooth-shaded: faceted shading was most of what made the garden look like
+// a low-poly game rather than a storybook.
 const mat = (color, extra = {}) =>
-  new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0, flatShading: true, ...extra });
+  new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0, ...extra });
+
+/** Smooth, cheap noise in roughly [-1, 1]: sines folded into each other. */
+function noise3(x, y, z) {
+  return (Math.sin(x * 1.7 + Math.sin(y * 2.3)) + Math.sin(y * 1.9 + Math.sin(z * 2.1)) + Math.sin(z * 1.5 + Math.sin(x * 2.7))) / 3;
+}
+
+/**
+ * A soft, lumpy ball of radius `r`: foliage, hedges, clouds. A subdivided
+ * icosahedron, welded so it shades smooth, pushed in and out by noise.
+ * `seed` shifts the noise so neighbouring blobs don't share their lumps.
+ */
+function blob(r, { detail = 3, wobble = 0.16, freq = 2.2, seed = 0 } = {}) {
+  const geo = new THREE.IcosahedronGeometry(1, detail);
+  geo.deleteAttribute("normal");
+  geo.deleteAttribute("uv");
+  const g = mergeVertices(geo);
+  const pos = g.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const k = 1 + wobble * noise3(v.x * freq + seed, v.y * freq + seed * 0.7, v.z * freq - seed * 1.3);
+    v.multiplyScalar(r * k);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 
 function mesh(geo, material, [x = 0, y = 0, z = 0] = [], { rot, cast = true, receive = false } = {}) {
   const m = new THREE.Mesh(geo, material);
@@ -87,7 +124,30 @@ function heartGeometry(size = 1, depth = 0.2) {
   return g;
 }
 
+/**
+ * The final touch on every frame, before tone mapping: a little more colour,
+ * a little warmer, and the edges softly darkened, like an illustration's.
+ */
+const GRADE = {
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      c.rgb = mix(vec3(l), c.rgb, 1.12);
+      c.rgb *= vec3(1.04, 1.0, 0.94);
+      float v = smoothstep(0.92, 0.3, distance(vUv, vec2(0.5)));
+      c.rgb *= mix(0.8, 1.0, v);
+      gl_FragColor = c;
+    }`,
+};
+
 /* ================================================================ scenery */
+
+/** Where the sun is: the light, and the sky's glow, both come from here. */
+// Low and behind the Hall, so the garden is backlit and the sky glows above it.
+const SUN = V(-30, 30, -40);
 
 function buildSky(scene) {
   const geo = new THREE.SphereGeometry(400, 32, 16);
@@ -97,100 +157,324 @@ function buildSky(scene) {
     uniforms: {
       top: { value: new THREE.Color(PALETTE.skyTop) },
       horizon: { value: new THREE.Color(PALETTE.skyHorizon) },
+      glow: { value: new THREE.Color(PALETTE.sunGlow) },
+      sunDir: { value: SUN.clone().normalize() },
     },
     vertexShader: `varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-    fragmentShader: `uniform vec3 top; uniform vec3 horizon; varying vec3 vPos;
-      void main() { float h = clamp(normalize(vPos).y * 1.6, 0.0, 1.0); gl_FragColor = vec4(mix(horizon, top, pow(h, 0.7)), 1.0); }`,
+    // A gradient, warmed toward the sun: a golden afternoon, not a flat blue.
+    fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 glow; uniform vec3 sunDir; varying vec3 vPos;
+      void main() {
+        vec3 d = normalize(vPos);
+        float h = clamp(d.y * 1.6, 0.0, 1.0);
+        vec3 c = mix(horizon, top, pow(h, 0.7));
+        float s = max(dot(d, sunDir), 0.0);
+        c += glow * (pow(s, 6.0) * 0.45 + pow(s, 60.0) * 0.6);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
   });
   scene.add(new THREE.Mesh(geo, material));
   scene.fog = new THREE.Fog(PALETTE.skyHorizon, 55, 140);
 }
 
-/** Flat meadow in the middle, rolling hills past the districts. */
-function groundHeight(x, z) {
-  const r = Math.hypot(x, z - 2);
-  const ramp = THREE.MathUtils.smoothstep(r, 30, 55);
-  const n = Math.sin(x * 0.11) * Math.cos(z * 0.13) * 3 + Math.sin((x + z) * 0.05) * 4 + Math.cos(x * 0.31 - z * 0.27) * 0.8;
-  return ramp * (n + 3.5);
-}
 
-function buildGround(scene, rand) {
-  const geo = new THREE.PlaneGeometry(220, 220, 90, 90);
+/** The ground: flat where things stand, hills beyond, banks down to the water. */
+function buildGround(scene) {
+  const geo = new THREE.PlaneGeometry(240, 240, 260, 260);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const colors = [];
   const tmp = new THREE.Color();
+  // Broad drifts of colour, not a random green per vertex — that speckle
+  // read as pixels.
+  const [lush, sunlit, deep, warm] = PALETTE.grass.map((c) => new THREE.Color(c));
+  const meadow = new THREE.Color(PALETTE.meadow);
+  const bank = new THREE.Color(PALETTE.bank), bed = new THREE.Color(PALETTE.streambed);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
-    pos.setY(i, groundHeight(x, z));
-    tmp.setHex(PALETTE.grass[Math.floor(rand() * PALETTE.grass.length)]);
+    const y = groundHeight(x, z);
+    pos.setY(i, y);
+    const a = noise3(x * 0.045, 0.3, z * 0.045) * 0.5 + 0.5;
+    const b = noise3(x * 0.11 + 4, 1.1, z * 0.11 - 2) * 0.5 + 0.5;
+    tmp.copy(deep).lerp(lush, a).lerp(sunlit, b * 0.55).lerp(warm, Math.max(0, a - 0.7) * 1.2);
+    // the hills fade warm toward the haze
+    tmp.lerp(meadow, THREE.MathUtils.smoothstep(Math.hypot(x, z), 40, 95) * 0.5);
+    // the banks: earth where the grass gives out, a dark bed under the water
+    if (y < 0) tmp.lerp(bank, THREE.MathUtils.smoothstep(-y, 0.05, 0.3)).lerp(bed, THREE.MathUtils.smoothstep(-y, 0.4, 1.0));
     colors.push(tmp.r, tmp.g, tmp.b);
   }
   geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  const ground = mesh(geo, mat(0xffffff, { vertexColors: true, roughness: 0.95 }), [0, 0, 0], { cast: false, receive: true });
-  scene.add(ground);
+  scene.add(mesh(geo, mat(0xffffff, { vertexColors: true, roughness: 0.95 }), [0, 0, 0], { cast: false, receive: true }));
 }
 
-/** The croquet lawn, checkered in two greens, with hoops. */
-function buildPlaza(scene) {
+/**
+ * Water: one sheet at the water's level over the stream, the pond and the
+ * pool, hidden wherever the ground stands above it. How shallow it is comes
+ * from the ground beneath each vertex, so the foam follows the real shore.
+ */
+const WATER = {
+  vertexShader: `attribute float shallow; varying float vShallow; varying vec3 vW;
+    void main() {
+      vShallow = shallow;
+      vec4 w = modelMatrix * vec4(position, 1.0);
+      vW = w.xyz;
+      gl_Position = projectionMatrix * viewMatrix * w;
+    }`,
+  fragmentShader: `uniform float time; uniform vec3 deep; uniform vec3 clear; uniform vec3 sky; varying float vShallow; varying vec3 vW;
+    void main() {
+      vec3 c = mix(deep, clear, smoothstep(0.1, 0.9, vShallow));
+      // glints moving on the surface
+      float r = sin(vW.x * 2.9 + time * 1.3 + sin(vW.z * 1.9 + time * 0.7) * 1.6) * sin(vW.z * 3.4 - time * 1.1 + sin(vW.x * 1.5) * 1.3);
+      c += vec3(1.0, 0.94, 0.8) * smoothstep(0.86, 1.0, r) * 0.4;
+      // the sky, where you see the water at a slant
+      vec3 v = normalize(cameraPosition - vW);
+      c = mix(c, sky, pow(1.0 - max(v.y, 0.0), 2.0) * 0.5);
+      // foam where it laps the bank
+      c = mix(c, vec3(0.97, 0.98, 1.0), smoothstep(0.8, 1.0, vShallow) * 0.55);
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+};
+
+function buildWater(scene) {
+  const material = new THREE.ShaderMaterial({
+    ...WATER,
+    uniforms: {
+      time: { value: 0 },
+      deep: { value: new THREE.Color(0x2c7aa6) },
+      clear: { value: new THREE.Color(0x86cfd6) },
+      sky: { value: new THREE.Color(PALETTE.skyHorizon) },
+    },
+  });
+  const X0 = -40, X1 = 30, Z0 = -27, Z1 = 10, STEP = 0.45;
+  const nx = Math.ceil((X1 - X0) / STEP), nz = Math.ceil((Z1 - Z0) / STEP);
+  const positions = [], shallow = [], ground = [], index = [];
+  for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
+    const x = X0 + i * STEP, z = Z0 + j * STEP;
+    const g = groundHeight(x, z);
+    positions.push(x, WATER_Y, z);
+    ground.push(g);
+    shallow.push(1 - THREE.MathUtils.clamp((WATER_Y - g) / 0.45, 0, 1));
+  }
+  const at = (i, j) => j * (nx + 1) + i;
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const q = [at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1)];
+    // only where there's water, give or take the bank
+    if (q.every((k) => ground[k] > WATER_Y + 0.25)) continue;
+    index.push(q[0], q[2], q[1], q[1], q[2], q[3]);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("shallow", new THREE.Float32BufferAttribute(shallow, 1));
+  geo.setIndex(index);
+  scene.add(mesh(geo, material, [0, 0, 0], { cast: false }));
+
+  // lily pads on the pond, a few in flower
+  const rand = rng(77);
+  const pad = mat(0x5f9e4a, { roughness: 0.6, side: THREE.DoubleSide });
+  const lotus = mat(0xf7a8c8, { roughness: 0.5 });
+  for (let i = 0; i < 14; i++) {
+    const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * (POND.r - 1.6);
+    const x = POND.centre.x + Math.cos(a) * d, z = POND.centre.z + Math.sin(a) * d;
+    const r = 0.35 + rand() * 0.35;
+    scene.add(mesh(new THREE.CircleGeometry(r, 18, 0.3, Math.PI * 2 - 0.6), pad, [x, WATER_Y + 0.02, z], { rot: [-Math.PI / 2, 0, rand() * 6], cast: false }));
+    if (rand() < 0.35) {
+      for (let k = 0; k < 6; k++) {
+        const p = mesh(new THREE.SphereGeometry(0.09, 10, 6).scale(0.6, 1.4, 0.4), lotus, [x, WATER_Y + 0.12, z], { cast: false });
+        p.rotation.set(0.5, (k / 6) * Math.PI * 2, 0, "YXZ");
+        p.translateY(0.06);
+        scene.add(p);
+      }
+    }
+  }
+  return { material };
+}
+
+/** Where the stream comes from: a fall of water over mossy rocks, back left. */
+function buildFalls(scene) {
+  const rand = rng(31);
+  const g = new THREE.Group();
+  g.position.set(FALLS.x, 0, FALLS.z);
+  scene.add(g);
+  // The rocks stand behind the pool, away from the camera and the stream.
+  const back = V(-0.75, 0, -0.66).normalize();
+  const rock = [0x9a968a, 0x8a8f7c, 0xa8a294, 0x7d8a6c].map((c) => mat(c, { roughness: 0.95 }));
+  for (let i = 0; i < 16; i++) {
+    const side = (rand() - 0.5) * 9, up = rand() * 5.5, out = 2.6 + rand() * 1.6 + up * 0.2;
+    const p = back.clone().multiplyScalar(out).add(V(-back.z * side, up, back.x * side));
+    const r = 1.2 + rand() * 1.4 - up * 0.08;
+    g.add(mesh(blob(r, { wobble: 0.25, freq: 1.6, seed: i * 1.7 }), rock[i % rock.length], [p.x, p.y, p.z], { rot: [rand(), rand(), rand()], receive: true }));
+  }
+  // moss and ferns on top
+  for (let i = 0; i < 8; i++) {
+    const side = (rand() - 0.5) * 8;
+    const p = back.clone().multiplyScalar(3.6 + rand()).add(V(-back.z * side, 6 + rand() * 0.8, back.x * side));
+    g.add(mesh(blob(0.9 + rand() * 0.6, { seed: i }), mat(0x6fae5a), [p.x, p.y, p.z]));
+  }
+  // the fall itself: streaks running down a sheet, curving out at the top
+  const sheet = new THREE.PlaneGeometry(2.2, 6.6, 1, 24);
+  const sp = sheet.attributes.position;
+  for (let i = 0; i < sp.count; i++) {
+    const t = (sp.getY(i) + 3.3) / 6.6;
+    sp.setZ(i, Math.sin(t * Math.PI * 0.5) * 0.9 - 0.4);
+  }
+  const falls = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { time: { value: 0 } },
+    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform float time; varying vec2 vUv;
+      void main() {
+        float s = sin(vUv.x * 40.0 + sin(vUv.x * 9.0) * 3.0) * 0.5 + 0.5;
+        float flow = sin(vUv.y * 18.0 + time * 7.0 + s * 4.0) * 0.5 + 0.5;
+        vec3 c = mix(vec3(0.62, 0.84, 0.92), vec3(1.0), s * 0.5 + flow * 0.35);
+        float edge = smoothstep(0.0, 0.18, vUv.x) * smoothstep(1.0, 0.82, vUv.x);
+        gl_FragColor = vec4(c * 1.1, edge * (0.7 + 0.25 * flow));
+      }`,
+  });
+  const fall = mesh(sheet, falls, [0, 0, 0], { cast: false });
+  fall.position.copy(back.clone().multiplyScalar(1.9)).setY(WATER_Y + 3.3);
+  fall.rotation.y = Math.atan2(-back.x, -back.z);
+  g.add(fall);
+  return { material: falls };
+}
+
+/** Cobbles, laid in rough rows, warm in the sun. */
+function cobbleTexture() {
+  const rand = rng(5);
+  const t = canvasTexture(256, 256, (c, w, h) => {
+    c.fillStyle = "#9d8c72"; c.fillRect(0, 0, w, h);
+    const tones = ["#d9ccb4", "#cbbca1", "#e4d8c2", "#c0b199", "#d4c6aa", "#b9ab92"];
+    for (let row = 0; row < 7; row++) {
+      let x = -rand() * 30;
+      while (x < w) {
+        const sw = 30 + rand() * 22, sh = 30 + rand() * 6;
+        const y = row * (h / 7) + rand() * 4;
+        c.fillStyle = tones[Math.floor(rand() * tones.length)];
+        c.beginPath();
+        c.ellipse(x + sw / 2, y + sh / 2, sw / 2 - 2, sh / 2 - 2, (rand() - 0.5) * 0.3, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = "rgba(255,250,235,0.35)";
+        c.beginPath(); c.ellipse(x + sw / 2 - 4, y + sh / 2 - 4, sw / 4, sh / 5, 0, 0, Math.PI * 2); c.fill();
+        x += sw + 2;
+      }
+    }
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+/** A strip of cobbles laid along `curve`, following the ground and the bridges. */
+function pathRibbon(curve, material) {
+  const n = Math.ceil(curve.getLength() / 0.35);
+  const positions = [], uvs = [], index = [];
+  let along = 0, prev = null;
+  for (let i = 0; i <= n; i++) {
+    const u = i / n;
+    const p = curve.getPointAt(u);
+    const t = curve.getTangentAt(u);
+    if (prev) along += p.distanceTo(prev);
+    prev = p;
+    for (const s of [-1, 1]) {
+      const x = p.x - t.z * (PATH_W / 2) * s, z = p.z + t.x * (PATH_W / 2) * s;
+      positions.push(x, walkHeight(x, z) + 0.04, z);
+      uvs.push((s + 1) / 2, along / PATH_W);
+    }
+    if (i) index.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i - 1, 2 * i + 1, 2 * i);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  return mesh(geo, material, [0, 0, 0], { cast: false, receive: true });
+}
+
+/** A humped stone bridge: one arch, parapets, the path running over the top. */
+function bridge(b) {
+  const g = new THREE.Group();
+  g.position.copy(b.centre).setY(0);
+  // local x runs across the stream, along b.dir
+  g.rotation.y = Math.atan2(-b.dir.z, b.dir.x);
+  const stone = mat(0xd8cab0, { roughness: 0.9 });
+  const N = 24;
+  const top = (t) => 0.05 + b.rise * Math.sin(Math.PI * t);
+  const body = new THREE.Shape();
+  body.moveTo(-b.half, -1.2);
+  for (let i = 0; i <= N; i++) body.lineTo(-b.half + (2 * b.half * i) / N, top(i / N));
+  body.lineTo(b.half, -1.2);
+  // the arch underneath, the water showing through it
+  const ah = b.half - 0.9;
+  body.lineTo(ah, -1.2);
+  for (let i = 0; i <= N; i++) {
+    const a = (i / N) * Math.PI;
+    body.lineTo(Math.cos(a) * ah, -1.2 + Math.sin(a) * (b.rise + 0.6));
+  }
+  body.lineTo(-b.half, -1.2);
+  const geo = new THREE.ExtrudeGeometry(body, { depth: b.width, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.05, bevelSegments: 2, curveSegments: 4 });
+  geo.translate(0, 0, -b.width / 2);
+  g.add(mesh(geo, stone, [0, 0, 0], { receive: true }));
+  // parapets, a low wall either side
+  for (const side of [-1, 1]) {
+    const wall = new THREE.Shape();
+    wall.moveTo(-b.half, top(0));
+    for (let i = 0; i <= N; i++) wall.lineTo(-b.half + (2 * b.half * i) / N, top(i / N) + 0.5);
+    for (let i = N; i >= 0; i--) wall.lineTo(-b.half + (2 * b.half * i) / N, top(i / N));
+    const wg = new THREE.ExtrudeGeometry(wall, { depth: 0.2, bevelEnabled: true, bevelSize: 0.04, bevelThickness: 0.04, bevelSegments: 2 });
+    wg.translate(0, 0, side * (b.width / 2 + 0.05) - 0.1);
+    g.add(mesh(wg, stone, [0, 0, 0]));
+  }
+  return g;
+}
+
+function buildPaths(scene) {
+  const cobbles = new THREE.MeshStandardMaterial({ map: cobbleTexture(), roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -2 });
+  for (const key of KEYS) scene.add(pathRibbon(PATHS[key].curve, cobbles));
+  for (const b of Object.values(BRIDGES)) scene.add(bridge(b));
+}
+
+/** Alice's clearing: softer, paler grass, ringed with flat stones. */
+function buildClearing(scene) {
+  const fade = canvasTexture(256, 256, (c, w, h) => {
+    const gr = c.createRadialGradient(w / 2, h / 2, w * 0.2, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, "rgba(255,255,255,1)");
+    gr.addColorStop(0.8, "rgba(255,255,255,0.8)");
+    gr.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = gr; c.fillRect(0, 0, w, h);
+  });
+  scene.add(mesh(new THREE.CircleGeometry(CLEARING_R + 0.8, 48), new THREE.MeshStandardMaterial({
+    color: 0xc4e08a, alphaMap: fade, transparent: true, roughness: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
+  }), [CLEARING.x, 0.015, CLEARING.z], { rot: [-Math.PI / 2, 0, 0], cast: false, receive: true }));
+  const rand = rng(12);
+  const stone = mat(0xe2d6c0, { roughness: 0.9 });
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2 + rand() * 0.2;
+    const x = CLEARING.x + Math.cos(a) * (CLEARING_R + 0.2), z = CLEARING.z + Math.sin(a) * (CLEARING_R + 0.2);
+    if (pathDist(x, z) < PATH_W / 2 + 0.3) continue;
+    scene.add(mesh(new THREE.CylinderGeometry(0.28 + rand() * 0.16, 0.34 + rand() * 0.16, 0.12, 14), stone, [x, 0.05, z], { receive: true }));
+  }
+}
+
+/** The Queen's croquet lawn, chequered, with hoops — and a hedgehog for a ball. */
+function buildCroquet(scene) {
+  const { centre, r } = CROQUET;
   const tex = canvasTexture(512, 512, (g, w, h) => {
-    const n = 10;
+    const n = 8;
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
       g.fillStyle = (i + j) % 2 ? PALETTE.lawnA : PALETTE.lawnB;
       g.fillRect((i * w) / n, (j * h) / n, w / n + 1, h / n + 1);
     }
   });
-  const lawn = mesh(new THREE.CircleGeometry(PLAZA_R, 48), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }),
-    [PLAZA.x, 0.02, PLAZA.z], { rot: [-Math.PI / 2, 0, 0], cast: false, receive: true });
-  scene.add(lawn);
-  scene.add(mesh(new THREE.TorusGeometry(PLAZA_R, 0.12, 6, 64), mat(PALETTE.stone),
-    [PLAZA.x, 0.04, PLAZA.z], { rot: [-Math.PI / 2, 0, 0], cast: false, receive: true }));
-
+  scene.add(mesh(new THREE.CircleGeometry(r, 48), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }),
+    [centre.x, 0.02, centre.z], { rot: [-Math.PI / 2, 0, 0], cast: false, receive: true }));
+  scene.add(mesh(new THREE.TorusGeometry(r, 0.1, 8, 64), mat(PALETTE.stone), [centre.x, 0.04, centre.z], { rot: [-Math.PI / 2, 0, 0], cast: false }));
   const hoop = mat(0xffffff);
-  for (const [x, z, r] of [[-2.5, 3.5, 0.4], [2.2, 6.8, -0.3], [0.4, 2.2, 1.2]]) {
-    scene.add(mesh(new THREE.TorusGeometry(0.35, 0.03, 6, 16, Math.PI), hoop, [PLAZA.x + x, 0.02, PLAZA.z + z], { rot: [0, r, 0] }));
+  for (const [x, z, a] of [[-1.6, 1.2, 0.4], [1.4, -1.5, -0.3], [0.4, 1.9, 1.2]]) {
+    scene.add(mesh(new THREE.TorusGeometry(0.35, 0.03, 6, 16, Math.PI), hoop, [centre.x + x, 0.02, centre.z + z], { rot: [0, a, 0] }));
   }
-  // a hedgehog, curled up as a croquet ball
-  scene.add(mesh(new THREE.IcosahedronGeometry(0.22, 0), mat(0x8a6a4a), [PLAZA.x - 1.4, 0.2, PLAZA.z + 4.3]));
+  scene.add(mesh(blob(0.22, { detail: 2, wobble: 0.3, freq: 7 }), mat(0x8a6a4a), [centre.x - 0.8, 0.2, centre.z + 0.4]));
 }
 
-/** A strip of path from a to b, lying on the ground. */
-function pathStrip(scene, a, b, { width = 1.8, material }) {
-  const d = b.clone().sub(a);
-  const len = d.length();
-  const geo = new THREE.PlaneGeometry(width, len);
-  geo.rotateX(-Math.PI / 2);
-  const m = mesh(geo, material, [(a.x + b.x) / 2, 0.025, (a.z + b.z) / 2], { cast: false, receive: true });
-  m.rotation.y = Math.atan2(d.x, d.z);
-  scene.add(m);
-  return { mesh: m, len };
-}
 
-function buildPaths(scene) {
-  for (const key of KEYS) {
-    const door = DISTRICTS[key].door;
-    const from = PLAZA.clone().add(door.clone().sub(PLAZA).setY(0).normalize().multiplyScalar(PLAZA_R - 0.3));
-    const into = door.clone().add(DISTRICTS[key].anchor.clone().sub(door).normalize().multiplyScalar(2.5));
-    if (key === "court") {
-      // the Queen's own black-and-white tiles
-      const len = into.distanceTo(from);
-      const tex = canvasTexture(64, 64, (g) => {
-        g.fillStyle = "#fbf6e9"; g.fillRect(0, 0, 64, 64);
-        g.fillStyle = "#29263a"; g.fillRect(0, 0, 32, 32); g.fillRect(32, 32, 32, 32);
-      });
-      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      tex.repeat.set(2, Math.round(len / 0.9));
-      tex.magFilter = THREE.NearestFilter;
-      pathStrip(scene, from, into, { width: 1.8, material: new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }) });
-    } else if (key === "hall") {
-      // flagstones, as befits a hall
-      pathStrip(scene, from, into, { width: 1.7, material: mat(PALETTE.stone, { roughness: 0.9 }) });
-    } else {
-      pathStrip(scene, from, into, { width: 1.9, material: mat(PALETTE.path, { roughness: 1 }) });
-    }
-  }
-}
+
 
 function tree(scene, x, z, s, rand, palette = [0x6fae5a, 0x86c06a, 0x5d9c4c]) {
   const y = groundHeight(x, z);
@@ -200,7 +484,7 @@ function tree(scene, x, z, s, rand, palette = [0x6fae5a, 0x86c06a, 0x5d9c4c]) {
   const n = 2 + Math.floor(rand() * 2);
   for (let i = 0; i < n; i++) {
     const r = (1.1 + rand() * 0.6) * s;
-    g.add(mesh(new THREE.IcosahedronGeometry(r, 0), mat(palette[i % palette.length]),
+    g.add(mesh(blob(r, { seed: x * 0.37 + z * 0.11 + i * 3.1 }), mat(palette[i % palette.length]),
       [(rand() - 0.5) * s, (2.6 + i * 0.9) * s, (rand() - 0.5) * s], { rot: [rand(), rand(), 0] }));
   }
   scene.add(g);
@@ -225,7 +509,7 @@ function cloud(rand) {
   const g = new THREE.Group();
   const white = mat(0xffffff, { roughness: 1, emissive: 0xffffff, emissiveIntensity: 0.15 });
   for (let i = 0; i < 5; i++) {
-    g.add(mesh(new THREE.IcosahedronGeometry(1.2 + rand() * 1.4, 1), white, [i * 1.6 - 3.2, rand() * 0.8, rand() * 1.2], { cast: false }));
+    g.add(mesh(blob(1.2 + rand() * 1.4, { wobble: 0.1, seed: i * 1.9 }), white, [i * 1.6 - 3.2, rand() * 0.8, rand() * 1.2], { cast: false }));
   }
   return g;
 }
@@ -250,75 +534,207 @@ function pocketWatch() {
   return g;
 }
 
-/** Just the grin and the eyes, as he's usually seen. */
-function cheshire() {
-  const g = new THREE.Group();
-  const pink = new THREE.MeshStandardMaterial({ color: PALETTE.chesh, roughness: 0.5, transparent: true });
-  const teeth = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, transparent: true });
-  const eyes = new THREE.MeshStandardMaterial({ color: 0xd8e04a, emissive: 0x8a9a10, roughness: 0.3, transparent: true });
-  g.add(mesh(new THREE.TorusGeometry(0.9, 0.16, 8, 24, Math.PI), pink, [0, 0, 0], { rot: [0, 0, Math.PI], cast: false }));
-  g.add(mesh(new THREE.TorusGeometry(0.82, 0.08, 6, 24, Math.PI * 0.9), teeth, [0, 0.02, 0.06], { rot: [0, 0, Math.PI * 1.05], cast: false }));
-  for (const x of [-0.5, 0.5]) {
-    const e = mesh(new THREE.SphereGeometry(0.2, 12, 8), eyes, [x, 0.65, 0], { cast: false });
-    e.scale.set(1, 0.6, 0.5);
-    g.add(e);
-  }
-  g.userData.materials = [pink, teeth, eyes];
-  return g;
-}
-
-/** The great tree off the back of the lawn, with the Cat in it. */
-function buildCentre(scene, rand) {
-  // Set to one side, so the way to the Hall is clear.
-  const x = -8, z = -6.5;
+/**
+ * The great tree by the pond, with the Cat on a branch and the rabbit-hole
+ * in its roots: a dark arched doorway, sparkling, as in the painting.
+ */
+function buildGreatTree(scene, rand) {
+  const { x, z } = GREAT_TREE;
   const g = new THREE.Group();
   g.position.set(x, 0, z);
+  const bark = mat(0x7a5236);
   const trunk = new THREE.LatheGeometry(
-    [V(1.2, 0, 0), V(0.75, 1, 0), V(0.55, 3, 0), V(0.6, 4.5, 0), V(0.9, 5.2, 0), V(0, 5.4, 0)].map((p) => new THREE.Vector2(p.x, p.y)), 9);
-  g.add(mesh(trunk, mat(0x7a5236)));
-  const leaves = [PALETTE.cheshSoft, 0x86c06a, 0xb8d77a, 0xf2b8d8];
+    [V(1.5, 0, 0), V(0.95, 1, 0), V(0.62, 3, 0), V(0.66, 4.5, 0), V(0.95, 5.2, 0), V(0, 5.4, 0)].map((p) => new THREE.Vector2(p.x, p.y)), 16);
+  g.add(mesh(trunk, bark));
+  // roots spreading into the grass
   for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    g.add(mesh(new THREE.IcosahedronGeometry(1.8 + rand() * 0.8, 0), mat(leaves[i % leaves.length]),
-      [Math.cos(a) * 1.8, 6 + rand() * 1.4, Math.sin(a) * 1.5], { rot: [rand(), rand(), rand()] }));
+    const a = (i / 6) * Math.PI * 2 + 0.3;
+    const root = mesh(new THREE.CapsuleGeometry(0.22, 1.4, 4, 10), bark, [Math.cos(a) * 1.4, 0.12, Math.sin(a) * 1.4]);
+    root.rotation.set(0, -a, Math.PI / 2 - 0.15);
+    g.add(root);
   }
-  g.add(mesh(new THREE.IcosahedronGeometry(2.4, 0), mat(0x9fcf72), [0, 7.6, 0]));
+  // All green: a pink cat in pink leaves was a cat nobody could find.
+  const leaves = [0x6fae5a, 0x86c06a, 0xb8d77a, 0x5d9c4c];
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    g.add(mesh(blob(1.9 + rand() * 0.8, { seed: i * 2.3 }), mat(leaves[i % leaves.length]),
+      [Math.cos(a) * 2, 6 + rand() * 1.4, Math.sin(a) * 1.7], { rot: [rand(), rand(), rand()] }));
+  }
+  g.add(mesh(blob(2.6, { seed: 9 }), mat(0x9fcf72), [0, 7.8, 0]));
+
+  // The rabbit-hole: a doorway into the trunk, facing the clearing.
+  const toward = CLEARING.clone().sub(GREAT_TREE).setY(0).normalize();
+  const door = new THREE.Shape();
+  door.moveTo(-0.45, 0); door.lineTo(-0.45, 0.75); door.absarc(0, 0.75, 0.45, Math.PI, 0, true); door.lineTo(0.45, 0); door.closePath();
+  const hole = mesh(new THREE.ShapeGeometry(door, 16), new THREE.MeshBasicMaterial({ color: 0x120c08 }), [0, 0, 0], { cast: false });
+  hole.position.copy(toward.clone().multiplyScalar(1.08)).setY(0.05);
+  hole.rotation.y = Math.atan2(toward.x, toward.z);
+  hole.rotation.x = -0.12;
+  g.add(hole);
+  const rim = mesh(new THREE.TorusGeometry(0.47, 0.08, 8, 20, Math.PI), bark, [0, 0, 0]);
+  rim.position.copy(hole.position).setY(0.8);
+  rim.rotation.copy(hole.rotation);
+  g.add(rim);
+
+  // His branch: out toward the clearing, so he lies in the open.
+  const BRANCH = { y: 3.6, len: 4.2, r0: 0.24, r1: 0.1, dir: V(-0.8, 0.06, 0.6).normalize() };
+  const limb = mesh(new THREE.CylinderGeometry(BRANCH.r1, BRANCH.r0, BRANCH.len, 9), bark,
+    BRANCH.dir.clone().multiplyScalar(BRANCH.len / 2).add(V(0, BRANCH.y, 0)));
+  limb.quaternion.setFromUnitVectors(V(0, 1, 0), BRANCH.dir);
+  g.add(limb);
   scene.add(g);
 
-  const cat = cheshire();
-  cat.position.set(x + 2.6, 5.6, z + 1.8);
+  const cheshire = buildCheshire();
+  const cat = cheshire.group;
+  // Along the branch, belly on its top, face turned to the camera. He's built
+  // head to +x; mirrored, his head leads out along a branch that points -x.
+  // A big cat, but a cat: well under Alice's height, not the tree's.
+  const along = 2.9, CAT_SCALE = 0.6;
+  const radius = BRANCH.r0 + (BRANCH.r1 - BRANCH.r0) * (along / BRANCH.len);
+  cat.position.copy(BRANCH.dir.clone().multiplyScalar(along).add(V(x, BRANCH.y + radius * 0.85, z)));
+  cat.scale.set(-CAT_SCALE, CAT_SCALE, CAT_SCALE);
+  cat.rotation.y = Math.atan2(BRANCH.dir.z, -BRANCH.dir.x);
   scene.add(cat);
 
-  for (const [mx, mz, s, c] of [[-3.2, -3.6, 1.5, PALETTE.heart], [3.4, -3.2, 1.1, PALETTE.chesh], [-4.2, -9.5, 1.6, PALETTE.heart],
-    [5.5, -7.5, 1.8, 0xe08a2e], [-11.5, -9, 1.2, PALETTE.chesh], [6.5, 9.5, 0.9, PALETTE.heart], [-7, 11, 1.1, 0xe08a2e]]) {
-    mushroom(scene, mx, mz, s, c);
-  }
-
-  // the rabbit-hole, in the corner of the lawn
-  const hx = -5.5, hz = 13;
-  scene.add(mesh(new THREE.CircleGeometry(0.95, 24), new THREE.MeshBasicMaterial({ color: 0x16120e }),
-    [hx, 0.03, hz], { rot: [-Math.PI / 2, 0, 0], cast: false }));
-  scene.add(mesh(new THREE.TorusGeometry(1.05, 0.22, 6, 20), mat(0x8a6a4a), [hx, 0.05, hz], { rot: [-Math.PI / 2, 0, 0] }));
-  return { cat };
+  return { cat: cheshire, hole: hole.getWorldPosition(new THREE.Vector3()).add(V(0, 0.7, 0)) };
 }
 
+/** Toadstools along the way, wherever they're clear of the water and the paths. */
+function buildMushrooms(scene) {
+  for (const [x, z, s, c] of [
+    [-21.5, -3.5, 1.4, PALETTE.heart], [-9.5, 1.2, 1.1, 0xe08a2e], [-3.8, -2.2, 1.3, PALETTE.heart], [3.8, -1.6, 0.9, PALETTE.chesh],
+    [16.5, 10.5, 1.2, PALETTE.heart], [-6.5, 12.5, 1, 0xe08a2e], [6.8, 12.8, 0.8, PALETTE.heart], [-18.5, -16, 1.6, PALETTE.heart],
+    [-3.5, -14.5, 1.2, 0xe08a2e], [5.5, -14, 1.4, PALETTE.heart], [20, -6.5, 1, PALETTE.chesh], [-25, 9, 1.3, 0xe08a2e],
+  ]) {
+    if (wet(x, z, 1) || pathDist(x, z) < PATH_W / 2 + 0.9) continue;
+    mushroom(scene, x, z, s, c);
+  }
+}
+
+/** A weeping willow: a crown, and long fronds hanging down to the water. */
+function willow(scene, x, z, s, seed) {
+  const rand = rng(seed);
+  const g = new THREE.Group();
+  g.position.set(x, groundHeight(x, z), z);
+  g.add(mesh(new THREE.CylinderGeometry(0.22 * s, 0.36 * s, 3.4 * s, 10), mat(0x7a5a3e), [0, 1.7 * s, 0]));
+  const leaf = mat(0x93c45e, { roughness: 0.85 });
+  g.add(mesh(blob(1.7 * s, { seed }), leaf, [0, 3.9 * s, 0]));
+  const fronds = [];
+  for (let i = 0; i < 80; i++) {
+    const a = rand() * Math.PI * 2, r = (1.1 + rand() * 0.9) * s, len = (1.8 + rand() * 1.8) * s;
+    const f = new THREE.CylinderGeometry(0.07 * s, 0.02 * s, len, 4);
+    f.translate(Math.cos(a) * r, 3.9 * s - len / 2 + rand() * 0.4 * s, Math.sin(a) * r);
+    fronds.push(f);
+  }
+  g.add(mesh(mergeGeometries(fronds), leaf));
+  scene.add(g);
+}
+
+/** The Queen's castle, on its hill, pale in the haze behind the Court. */
+function buildCastle(scene) {
+  const g = new THREE.Group();
+  g.position.set(CASTLE.x, groundHeight(CASTLE.x, CASTLE.z) - 0.5, CASTLE.z);
+  const wall = mat(0xf4e6d6, { roughness: 0.9 });
+  const roof = mat(0xdf6f8a, { roughness: 0.7 });
+  const gold = new THREE.MeshStandardMaterial({ color: PALETTE.gold, metalness: 0.6, roughness: 0.35 });
+  const tower = (x, z, r, h) => {
+    g.add(mesh(new THREE.CylinderGeometry(r, r * 1.05, h, 20), wall, [x, h / 2, z]));
+    g.add(mesh(new THREE.ConeGeometry(r * 1.3, r * 3, 20), roof, [x, h + r * 1.5, z]));
+    g.add(mesh(new THREE.SphereGeometry(r * 0.15, 8, 6), gold, [x, h + r * 3.05, z], { cast: false }));
+    // windows: dark slits, a few lit
+    for (let k = 0; k < 3; k++) {
+      const a = k * 2.1 + x;
+      g.add(mesh(new THREE.PlaneGeometry(r * 0.25, r * 0.6), new THREE.MeshStandardMaterial({ color: 0x4a3a5a, emissive: k === 0 ? 0xffc070 : 0x000000, emissiveIntensity: 1.2 }),
+        [x + Math.sin(a) * r * 1.01, h * 0.7, z + Math.cos(a) * r * 1.01], { rot: [0, a, 0], cast: false }));
+    }
+  };
+  tower(0, 0, 2.6, 15);
+  for (const [x, z, r, h] of [[-6, 2, 1.4, 10], [6, 2, 1.4, 10.5], [-4.5, -4, 1.2, 12], [4.5, -4, 1.2, 11.5], [-9, -1, 1, 8], [9, -1.5, 1, 8.5]]) tower(x, z, r, h);
+  // curtain walls between the front towers, with battlements
+  g.add(mesh(new THREE.BoxGeometry(12, 5.5, 1), wall, [0, 2.75, 2.4]));
+  for (let i = 0; i < 11; i++) g.add(mesh(new THREE.BoxGeometry(0.6, 0.6, 1.05), wall, [-5 + i, 5.8, 2.4]));
+  g.add(mesh(heartGeometry(1.1, 0.3), mat(PALETTE.heart), [0, 12, 2.7]));
+  g.scale.setScalar(1.05);
+  scene.add(g);
+}
+
+/** Trees: a far ring, groves framing either side, willows by the water. */
 function buildOutskirts(scene, rand) {
-  // Trees in a loose ring, kept off the districts and the view of them.
-  for (let i = 0; i < 70; i++) {
-    const a = rand() * Math.PI * 2;
-    const r = 26 + rand() * 30;
+  const open = (x, z) => !wet(x, z, 2) && pathDist(x, z) > 3.5
+    && Math.hypot(x - CASTLE.x, z - CASTLE.z) > 16
+    && Math.hypot(x - CLEARING.x, z - CLEARING.z) > 9
+    && Math.hypot(x - CROQUET.centre.x, z - CROQUET.centre.z) > 7
+    && Math.hypot(x - GREAT_TREE.x, z - GREAT_TREE.z) > 6
+    && Math.hypot(x - FALLS.x, z - FALLS.z) > 7
+    && !KEYS.some((k) => Math.hypot(x - DISTRICTS[k].anchor.x, z - DISTRICTS[k].anchor.z) < 10.5);
+  const blossom = [PALETTE.cheshSoft, 0xf2b8d8, 0x86c06a];
+  for (let i = 0; i < 110; i++) {
+    const a = rand() * Math.PI * 2, r = 30 + rand() * 34;
     const x = Math.cos(a) * r, z = Math.sin(a) * r - 4;
-    if (z > 10 && Math.abs(x) < 30) continue; // keep the camera's foreground open
-    tree(scene, x, z, 0.8 + rand() * 0.9, rand, rand() < 0.2 ? [PALETTE.cheshSoft, 0xf2b8d8, 0x86c06a] : undefined);
+    if (z > 16 && Math.abs(x) < 36) continue; // keep the camera's foreground open
+    if (open(x, z)) tree(scene, x, z, 0.9 + rand() * 1.0, rand, rand() < 0.22 ? blossom : undefined);
   }
-  for (let i = 0; i < 18; i++) {
-    const a = rand() * Math.PI * 2, r = 18 + rand() * 12;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (z > 8 && Math.abs(x) < 22) continue;
-    if (KEYS.some((k) => Math.hypot(x - DISTRICTS[k].anchor.x, z - DISTRICTS[k].anchor.z) < 9)) continue;
-    mushroom(scene, x, z, 0.5 + rand() * 1.2, [PALETTE.heart, PALETTE.chesh, 0xe08a2e][i % 3]);
+  // groves either side, framing the picture as a painter would
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 16; i++) {
+      const x = side * (26 + rand() * 10), z = -16 + rand() * 34;
+      if (open(x, z)) tree(scene, x, z, 1 + rand() * 0.9, rand, rand() < 0.3 ? blossom : undefined);
+    }
   }
+  // a glade behind the Tea Party
+  for (const [x, z, s] of [[-23.5, -3.5, 1.3], [-11.5, -5, 1.1], [-25, 7, 1.2], [-20.5, -6.5, 1]]) tree(scene, x, z, s, rand, blossom);
+  // willows along the stream, leaning over it
+  [[-22, -15.5, 1.1], [-12, -4.6, 1], [2.2, -11.2, 1.15], [11, -0.2, 0.95], [16.2, -6.5, 1.05], [-30, -15, 1.2]]
+    .forEach(([x, z, s], i) => { if (!wet(x, z, 0.3)) willow(scene, x, z, s, 100 + i); });
 }
+
+/** Giant flowers along the front of the picture, as tall as Alice or taller. */
+function buildGiantFlowers(scene) {
+  const rand = rng(404);
+  const daisy = (g, s, petal) => {
+    const pm = mat(petal, { roughness: 0.6 });
+    for (let i = 0; i < 16; i++) {
+      const p = mesh(new THREE.SphereGeometry(0.22 * s, 12, 8).scale(0.45, 0.14, 1.6), pm, [0, 0, 0]);
+      p.rotation.y = (i / 16) * Math.PI * 2;
+      p.translateZ(0.42 * s);
+      g.add(p);
+    }
+    g.add(mesh(new THREE.SphereGeometry(0.24 * s, 16, 10).scale(1, 0.55, 1), mat(0xffc93a, { roughness: 0.5 }), [0, 0.04 * s, 0]));
+  };
+  const tulip = (g, s, petal) => {
+    const pm = mat(petal, { roughness: 0.55 });
+    for (let i = 0; i < 5; i++) {
+      const p = mesh(new THREE.SphereGeometry(0.3 * s, 14, 10).scale(0.6, 1.25, 0.4), pm, [0, 0.28 * s, 0]);
+      p.rotation.set(0.28, (i / 5) * Math.PI * 2, 0, "YXZ");
+      p.translateZ(0.13 * s);
+      g.add(p);
+    }
+  };
+  const kinds = [[daisy, 0xffffff], [daisy, 0xffd24a], [tulip, 0xe8384f], [tulip, 0xf2668b], [daisy, 0xffa6c9], [tulip, 0xffa13d]];
+  const spots = [[-20, 17.5], [-16, 20], [-12.5, 17], [-8.5, 19.5], [-23.5, 13.5], [9, 19.5], [13, 17.5], [17, 20], [20.5, 16], [24, 13.5], [-4.5, 21.5], [5, 21.5]];
+  spots.forEach(([x, z], i) => {
+    const [make, petal] = kinds[i % kinds.length];
+    const s = 1.4 + rand() * 1.1, h = (1.8 + rand() * 1.6) * s * 0.7;
+    const g = new THREE.Group();
+    g.position.set(x, groundHeight(x, z), z);
+    const stem = mat(0x4f8a3e);
+    g.add(mesh(new THREE.CylinderGeometry(0.05 * s, 0.08 * s, h, 8), stem, [0, h / 2, 0]));
+    for (const side of [-1, 1]) {
+      const leaf = mesh(new THREE.SphereGeometry(0.3 * s, 12, 8).scale(0.35, 0.08, 1.6), stem, [side * 0.18 * s, h * 0.3, 0]);
+      leaf.rotation.set(0.6, side * 1.2, 0, "YXZ");
+      g.add(leaf);
+    }
+    const head = new THREE.Group();
+    head.position.y = h;
+    // tipped toward the camera, as if to look at you
+    head.rotation.set(0.55 + rand() * 0.3, 0, (rand() - 0.5) * 0.4);
+    make(head, s, petal);
+    g.add(head);
+    g.rotation.y = (rand() - 0.5) * 0.6;
+    scene.add(g);
+  });
+}
+
 
 /* ============================================================ tea party */
 
@@ -374,7 +790,7 @@ function buildTeaParty(scene) {
   // the table, with a cloth that hangs over its edges
   const cloth = mat(0xffffff, { roughness: 0.9 });
   g.add(mesh(new THREE.BoxGeometry(9, 0.1, 2.2), cloth, [0, 1.0, 0], { receive: true }));
-  g.add(mesh(new THREE.BoxGeometry(9.1, 0.35, 2.3), mat(0xf6c9d8), [0, 0.82, 0]));
+  g.add(mesh(new RoundedBoxGeometry(9.1, 0.35, 2.3, 3, 0.1), mat(0xf6c9d8), [0, 0.82, 0]));
   for (const x of [-4, 4]) for (const z of [-0.85, 0.85]) {
     g.add(mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.95, 6), mat(0x8a6040), [x, 0.47, z]));
   }
@@ -448,6 +864,14 @@ function buildTeaParty(scene) {
     f.moveTo(-0.22, 0); f.lineTo(0.22, 0); f.lineTo(0, -0.4); f.closePath();
     g.add(mesh(new THREE.ShapeGeometry(f), mat(colors[i % colors.length], { side: THREE.DoubleSide }), [x, y, -2.4], { cast: false }));
   }
+  // paper lanterns between the flags, lit from within
+  [0xffb35c, 0xff8fb0, 0xffe07a, 0xff9d5c, 0xffc8e0].forEach((c, i) => {
+    const t = (i + 0.5) / 5, x = -4.6 + t * 9.2, y = 3.1 - Math.sin(t * Math.PI) * 0.6 - 0.55;
+    g.add(mesh(new THREE.SphereGeometry(0.26, 16, 12).scale(1, 1.25, 1), new THREE.MeshStandardMaterial({
+      color: c, emissive: c, emissiveIntensity: 1.6, roughness: 0.6,
+    }), [x, y, -2.25], { cast: false }));
+    g.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.06, 10), mat(0x8a6040), [x, y + 0.34, -2.25], { cast: false }));
+  });
 
   // Letters: a fixed pool, shown as conversations arrive.
   const letters = [];
@@ -520,12 +944,12 @@ function soldier(back) {
 function roseBush(scene, x, z, rand, painted = 0.7) {
   const g = new THREE.Group();
   g.position.set(x, 0, z);
-  g.add(mesh(new THREE.IcosahedronGeometry(0.8, 0), mat(0x4f8a3e), [0, 0.7, 0], { rot: [rand(), rand(), 0] }));
+  g.add(mesh(blob(0.8, { seed: x + z }), mat(0x4f8a3e), [0, 0.7, 0], { rot: [rand(), rand(), 0] }));
   for (let i = 0; i < 7; i++) {
     const p = new THREE.Vector3().setFromSphericalCoords(0.78, 0.4 + rand() * 1.1, rand() * Math.PI * 2);
     // Some still white: the gardeners haven't finished painting them.
     const c = rand() < painted ? PALETTE.heart : 0xffffff;
-    g.add(mesh(new THREE.IcosahedronGeometry(0.16, 0), mat(c), [p.x, 0.7 + p.y, p.z], { cast: false }));
+    g.add(mesh(blob(0.16, { detail: 2, wobble: 0.22, freq: 9, seed: i }), mat(c), [p.x, 0.7 + p.y, p.z], { cast: false }));
   }
   scene.add(g);
 }
@@ -545,9 +969,9 @@ function buildCourt(scene, rand) {
   throne.position.set(0, 0.24, -3.4);
   const red = mat(PALETTE.heart, { roughness: 0.55 });
   const gold = new THREE.MeshStandardMaterial({ color: PALETTE.gold, metalness: 0.6, roughness: 0.35 });
-  throne.add(mesh(new THREE.BoxGeometry(2.2, 0.5, 1.6), gold, [0, 0.25, 0]));
-  throne.add(mesh(new THREE.BoxGeometry(1.6, 0.4, 1.2), red, [0, 0.7, 0.1]));
-  throne.add(mesh(new THREE.BoxGeometry(1.8, 2.6, 0.3), red, [0, 1.8, -0.55]));
+  throne.add(mesh(new RoundedBoxGeometry(2.2, 0.5, 1.6, 3, 0.08), gold, [0, 0.25, 0]));
+  throne.add(mesh(new RoundedBoxGeometry(1.6, 0.4, 1.2, 3, 0.15), red, [0, 0.7, 0.1]));
+  throne.add(mesh(new RoundedBoxGeometry(1.8, 2.6, 0.3, 3, 0.12), red, [0, 1.8, -0.55]));
   throne.add(mesh(heartGeometry(0.75, 0.25), red, [0, 3.5, -0.55]));
   throne.add(mesh(new THREE.TorusGeometry(0.9, 0.07, 6, 24), gold, [0, 3.5, -0.4], { cast: false }));
   for (const x of [-1, 1]) throne.add(mesh(new THREE.BoxGeometry(0.25, 0.7, 1.4), gold, [x, 0.85, 0.1]));
@@ -564,7 +988,7 @@ function buildCourt(scene, rand) {
   const hedge = mat(0x467e37);
   for (let i = 0; i <= 10; i++) {
     const a = Math.PI + (i / 10) * Math.PI;
-    g.add(mesh(new THREE.BoxGeometry(1.8, 1.6, 0.9), hedge, [Math.cos(a) * 6.6, 0.8, Math.sin(a) * 6.6], { rot: [0, -a + Math.PI / 2, 0] }));
+    g.add(mesh(new RoundedBoxGeometry(1.8, 1.6, 0.9, 4, 0.32), hedge, [Math.cos(a) * 6.6, 0.8, Math.sin(a) * 6.6], { rot: [0, -a + Math.PI / 2, 0] }));
   }
 
   // a heart-shaped topiary arch over the way in
@@ -573,7 +997,7 @@ function buildCourt(scene, rand) {
   arch.position.set(door.x * 0.78, 0, door.z * 0.78);
   arch.rotation.y = Math.atan2(door.x, door.z) + Math.PI / 2;
   arch.add(mesh(new THREE.TorusGeometry(1.5, 0.28, 6, 18, Math.PI), hedge, [0, 1.2, 0]));
-  for (const x of [-1.5, 1.5]) arch.add(mesh(new THREE.BoxGeometry(0.56, 1.2, 0.56), hedge, [x, 0.6, 0]));
+  for (const x of [-1.5, 1.5]) arch.add(mesh(new RoundedBoxGeometry(0.56, 1.2, 0.56, 4, 0.2), hedge, [x, 0.6, 0]));
   arch.add(mesh(heartGeometry(0.4, 0.1), red, [0, 3.05, 0]));
   g.add(arch);
 
@@ -791,6 +1215,142 @@ function buildHall(scene) {
 
 /* ================================================================ world */
 
+/* =============================================================== meadow */
+
+
+/** A spot in the meadow, thicker toward the middle, thinning out. */
+function meadowSpot(rand) {
+  for (;;) {
+    const a = rand() * Math.PI * 2;
+    const r = 5 + Math.pow(rand(), 1.4) * 40;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r - 4;
+    if (meadowClear(x, z)) return [x, z];
+  }
+}
+
+function flowerHead() {
+  const petals = [];
+  for (let i = 0; i < 6; i++) {
+    const p = new THREE.SphereGeometry(0.1, 10, 6);
+    p.scale(1, 0.32, 0.55);
+    p.translate(0.11, 0, 0);
+    p.rotateY((i / 6) * Math.PI * 2);
+    petals.push(p);
+  }
+  return mergeGeometries(petals);
+}
+
+function grassTuft() {
+  const blades = [];
+  for (let i = 0; i < 5; i++) {
+    const b = new THREE.ConeGeometry(0.03, 0.42, 4);
+    b.translate(0, 0.21, 0);
+    b.rotateZ((i - 2) * 0.22);
+    b.rotateY(i * 1.3);
+    blades.push(b);
+  }
+  return mergeGeometries(blades);
+}
+
+/**
+ * Flowers and grass tufts, as instances so a few thousand cost about what
+ * one would, and sparkles drifting round the great tree and the rabbit-hole.
+ */
+function buildMeadow(scene, { hole }) {
+  // Its own seed: drawing from the garden's would move every tree after it.
+  const rand = rng(1951);
+  const FLOWERS = 2200, TUFTS = 2600;
+  const petalColors = [0xf2668b, 0xffd24a, 0xffffff, 0xb37be0, 0xff8a3d, 0xe8384f, 0xffa6c9, 0x7fb3ff].map((c) => new THREE.Color(c));
+
+  const stems = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.014, 0.02, 1, 5).translate(0, 0.5, 0), mat(0x4f8a3e), FLOWERS);
+  const heads = new THREE.InstancedMesh(flowerHead(), mat(0xffffff, { roughness: 0.55 }), FLOWERS);
+  const hearts = new THREE.InstancedMesh(new THREE.SphereGeometry(0.055, 10, 8).scale(1, 0.6, 1).translate(0, 0.02, 0), mat(0xffc93a, { roughness: 0.5 }), FLOWERS);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+  // In drifts of one or two colours, as a garden grows, with a few strays
+  // between them: scattered evenly, they read as confetti.
+  const flowers = [];
+  while (flowers.length < FLOWERS * 0.88) {
+    const [cx, cz] = meadowSpot(rand);
+    const r = 0.8 + rand() * 1.8, n = 10 + Math.floor(rand() * 26);
+    const colours = [petalColors[Math.floor(rand() * petalColors.length)], petalColors[Math.floor(rand() * petalColors.length)]];
+    for (let k = 0; k < n; k++) {
+      const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * r;
+      const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+      if (meadowClear(x, z)) flowers.push([x, z, colours[rand() < 0.75 ? 0 : 1]]);
+    }
+  }
+  while (flowers.length < FLOWERS) flowers.push([...meadowSpot(rand), petalColors[Math.floor(rand() * petalColors.length)]]);
+  for (let i = 0; i < FLOWERS; i++) {
+    const [x, z, colour] = flowers[i];
+    const y = groundHeight(x, z);
+    const h = 0.28 + rand() * 0.5, size = 0.75 + rand() * 0.75;
+    m4.compose(p.set(x, y, z), q.identity(), sc.set(1, h, 1));
+    stems.setMatrixAt(i, m4);
+    // heads tip toward the camera's side a little, as if turned to the sun
+    q.setFromEuler(e.set(0.25 + rand() * 0.3, rand() * Math.PI * 2, (rand() - 0.5) * 0.4));
+    m4.compose(p.set(x, y + h, z), q, sc.setScalar(size));
+    heads.setMatrixAt(i, m4);
+    hearts.setMatrixAt(i, m4);
+    heads.setColorAt(i, colour);
+  }
+
+  const tufts = new THREE.InstancedMesh(grassTuft(), mat(0xffffff, { roughness: 0.9 }), TUFTS);
+  const greens = [0x5f9a48, 0x77b257, 0x8fc464, 0xa7cf6c].map((c) => new THREE.Color(c));
+  for (let i = 0; i < TUFTS; i++) {
+    const [x, z] = meadowSpot(rand);
+    q.setFromEuler(e.set(0, rand() * Math.PI * 2, 0));
+    m4.compose(p.set(x, groundHeight(x, z), z), q, sc.setScalar(0.8 + rand() * 0.9));
+    tufts.setMatrixAt(i, m4);
+    tufts.setColorAt(i, greens[Math.floor(rand() * greens.length)]);
+  }
+  for (const m of [stems, heads, hearts, tufts]) {
+    m.castShadow = false;
+    m.receiveShadow = m !== tufts;
+    scene.add(m);
+  }
+
+  // Sparkles: points that drift and twinkle, bright enough to bloom.
+  const spots = [];
+  const cloud = (n, cx, cy, cz, r, h) => {
+    for (let i = 0; i < n; i++) {
+      const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * r;
+      spots.push(cx + Math.cos(a) * d, cy + rand() * h, cz + Math.sin(a) * d);
+    }
+  };
+  cloud(100, GREAT_TREE.x, 2.5, GREAT_TREE.z, 4.5, 6.5); // the great tree
+  cloud(50, hole.x, hole.y - 0.6, hole.z, 0.7, 1.6); // the rabbit-hole in its roots
+  cloud(45, FALLS.x, 0, FALLS.z, 2.5, 3); // spray from the falls
+  cloud(70, 0, 0.4, -4, 26, 2.5); // here and there over the meadow
+  const n = spots.length / 3;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(spots, 3));
+  geo.setAttribute("phase", new THREE.Float32BufferAttribute(Array.from({ length: n }, () => rand() * 100), 1));
+  geo.setAttribute("size", new THREE.Float32BufferAttribute(Array.from({ length: n }, () => 0.35 + rand() * 0.55), 1));
+  const sparkles = new THREE.Points(geo, new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { time: { value: 0 }, scale: { value: 1 } },
+    vertexShader: `attribute float phase; attribute float size; uniform float time; uniform float scale; varying float vA;
+      void main() {
+        vec3 p = position;
+        p.y += sin(time * 0.6 + phase) * 0.3;
+        p.x += sin(time * 0.4 + phase * 1.3) * 0.25;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_Position = projectionMatrix * mv;
+        vA = 0.35 + 0.65 * pow(0.5 + 0.5 * sin(time * 1.8 + phase * 3.0), 2.0);
+        gl_PointSize = size * scale * 300.0 / -mv.z;
+      }`,
+    fragmentShader: `varying float vA;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.0, d);
+        gl_FragColor = vec4(vec3(1.0, 0.9, 0.65) * 2.2, a * a * vA);
+      }`,
+  }));
+  sparkles.frustumCulled = false;
+  scene.add(sparkles);
+  return { sparkles };
+}
+
 export function createWorld({ canvas, overlay, onDistrict, names }) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -801,8 +1361,10 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 900);
-  // Far enough up and back to see all three districts, the Hall behind the lawn.
-  const HOME = { pos: V(0, 21, 30), target: V(0, 1, -2) };
+  // Far enough up and back to see the whole map: the clearing and the giant
+  // flowers at the front, the stream across the middle, the Hall and the Court
+  // beyond it, and the castle on its hill at the back.
+  const HOME = { pos: V(0, 28, 39), target: V(0, 0, -11) };
   camera.position.copy(HOME.pos);
 
   const controls = new OrbitControls(camera, canvas);
@@ -817,27 +1379,53 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
   /* --- light ------------------------------------------------------------ */
-  scene.add(new THREE.HemisphereLight(0xfff6e0, 0x6a8f4a, 1.15));
-  const sun = new THREE.DirectionalLight(0xfff1d6, 2.2);
-  sun.position.set(18, 32, 20);
+  // A golden afternoon: warm sun from behind, a sky-coloured fill from above
+  // and the grass's green bounced up from below, so nothing goes muddy.
+  scene.add(new THREE.HemisphereLight(0xffeed8, 0x5d8a48, 1.35));
+  const sun = new THREE.DirectionalLight(0xffd9a4, 2.7);
+  sun.position.copy(SUN);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 24, bottom: -24, near: 1, far: 90 });
+  Object.assign(sun.shadow.camera, { left: -38, right: 38, top: 30, bottom: -30, near: 1, far: 120 });
   sun.shadow.bias = -0.0006;
   sun.shadow.normalBias = 0.03;
+  // Soft-edged shadows, as a painter would leave them.
+  sun.shadow.radius = 4;
   scene.add(sun);
+  // A faint warm light from the camera's side, so faces turned to you aren't
+  // lost in the backlight.
+  const fill = new THREE.DirectionalLight(0xffe6cc, 0.55);
+  fill.position.set(10, 14, 30);
+  scene.add(fill);
+
+  /* --- the picture: bloom and a storybook grade ------------------------- */
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  // Only what's really bright blooms: sparkles, the sun's glow, a lit window.
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.55, 0.92);
+  composer.addPass(bloom);
+  composer.addPass(new ShaderPass(GRADE));
+  composer.addPass(new OutputPass());
 
   /* --- the place -------------------------------------------------------- */
   const rand = rng(1865);
   buildSky(scene);
-  buildGround(scene, rand);
-  buildPlaza(scene);
+  buildGround(scene);
+  const water = buildWater(scene);
+  const falls = buildFalls(scene);
   buildPaths(scene);
-  const centre = buildCentre(scene, rand);
+  buildClearing(scene);
+  buildCroquet(scene);
+  const centre = buildGreatTree(scene, rand);
+  buildMushrooms(scene);
   buildOutskirts(scene, rand);
+  buildCastle(scene);
+  buildGiantFlowers(scene);
   const tea = buildTeaParty(scene);
   const court = buildCourt(scene, rand);
   const hall = buildHall(scene);
+  const meadow = buildMeadow(scene, centre);
+  meadow.sparkles.material.uniforms.scale.value = renderer.getPixelRatio();
 
   const clouds = [];
   for (let i = 0; i < 9; i++) {
@@ -850,7 +1438,8 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   const watches = [];
   for (let i = 0; i < 5; i++) {
     const w = pocketWatch();
-    w.position.set(-24 + i * 12, 12 + rand() * 6, -20 - rand() * 10);
+    // high over the back of the map, clear of the districts
+    w.position.set(-30 + i * 13, 17 + rand() * 6, -34 - rand() * 10);
     w.userData.phase = rand() * 10;
     scene.add(w);
     watches.push(w);
@@ -863,7 +1452,7 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   const figure = buildAlice();
   const me = figure.group;
   me.scale.setScalar(ALICE_SCALE);
-  me.position.copy(PLAZA);
+  me.position.copy(CLEARING);
   scene.add(me);
 
   /* --- labels: HTML over the canvas, placed each frame ------------------ */
@@ -1013,17 +1602,27 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   const errands = [];
   let clock = 0;
 
-  /** Straight across the lawn, or via the middle of it when changing sides. */
-  function routeTo(to) {
-    const fromOut = me.position.distanceTo(PLAZA) > PLAZA_R + 0.5;
-    const toOut = to.distanceTo(PLAZA) > PLAZA_R + 0.5;
-    route = fromOut && toOut ? [PLAZA.clone().add(V(0, 0, 1.5)), to.clone()] : [to.clone()];
+  /**
+   * Along the paths: back from wherever she is to the clearing, then out
+   * along the path to `key`'s door — or, with no key, to `spot` in the
+   * clearing. Paths keep her out of the stream; the bridges are on them.
+   */
+  let at = null; // the district she's standing at, or null in the clearing
+  let headed = null;
+  function routeTo(key, spot = null) {
+    route = [];
+    if (at && at !== key) route.push(...[...PATHS[at].walk].reverse());
+    if (key && key !== at) route.push(...PATHS[key].walk);
+    else if (key) route.push(DISTRICTS[key].door.clone());
+    if (!key && spot) route.push(spot);
+    route = route.map((p) => p.clone());
+    headed = key;
   }
 
   function wanderSpot() {
     const a = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(Math.random()) * (PLAZA_R - 1.4);
-    return V(PLAZA.x + Math.cos(a) * r, 0, PLAZA.z + Math.sin(a) * r);
+    const r = Math.sqrt(Math.random()) * (CLEARING_R - 1.2);
+    return V(CLEARING.x + Math.cos(a) * r, 0, CLEARING.z + Math.sin(a) * r);
   }
 
   function say(text, seconds) {
@@ -1040,7 +1639,7 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
     current = errands.shift() ?? null;
     if (current) {
       hush();
-      routeTo(DISTRICTS[current.district].door);
+      routeTo(current.district);
       state = "walking";
       if (current.onTheWay) say(current.onTheWay, 2.5);
     }
@@ -1070,14 +1669,18 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
       const dist = Math.hypot(dx, dz);
       const step = SPEED * (current ? 1.25 : 0.6) * dt;
       if (dist <= step) {
-        me.position.set(target.x, 0, target.z);
+        me.position.x = target.x;
+        me.position.z = target.z;
         route.shift();
+        if (!route.length) at = headed;
       } else {
         me.position.x += (dx / dist) * step;
         me.position.z += (dz / dist) * step;
         turnToward(target.x, target.z, dt);
         walking = true;
       }
+      // up and over the bridges
+      me.position.y = walkHeight(me.position.x, me.position.z);
     }
 
     if (!route.length) {
@@ -1106,7 +1709,8 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
           // something waiting, without making an announcement of it.
           const busy = [teaCount && "tea", courtWaiting && "court", hallShut && "hall"].filter(Boolean);
           const peek = busy.length && Math.random() < 0.25;
-          routeTo(peek ? DISTRICTS[busy[Math.floor(Math.random() * busy.length)]].door : wanderSpot());
+          if (peek) routeTo(busy[Math.floor(Math.random() * busy.length)]);
+          else routeTo(null, wanderSpot());
           state = "walking";
         }
       }
@@ -1181,6 +1785,8 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
     const w = canvas.clientWidth, h = canvas.clientHeight;
     if (!w || !h) return;
     renderer.setSize(w, h, false);
+    composer.setPixelRatio(renderer.getPixelRatio());
+    composer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     const r = reach();
@@ -1255,12 +1861,13 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
       w.rotation.y = Math.sin(clock * 0.3 + w.userData.phase) * 0.8 * m;
       w.position.y += Math.sin(clock * 0.7 + w.userData.phase) * 0.004 * m;
     }
-    // The Cat comes and goes.
-    const fade = reduceMotion ? 1 : THREE.MathUtils.clamp(0.5 + Math.sin(clock * 0.35) * 0.9, 0, 1);
-    for (const mtl of centre.cat.userData.materials) mtl.opacity = fade;
-    centre.cat.visible = fade > 0.02;
+    meadow.sparkles.material.uniforms.time.value = reduceMotion ? 0 : clock;
+    water.material.uniforms.time.value = clock * m;
+    falls.material.uniforms.time.value = clock * m;
+    // The Cat comes and goes, tail first and grin last.
+    centre.cat.update(clock, { still: reduceMotion });
 
-    renderer.render(scene, camera);
+    composer.render();
     placeLabels();
   }
   requestAnimationFrame(frame);
