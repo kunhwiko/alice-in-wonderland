@@ -1841,11 +1841,20 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   new ResizeObserver(resize).observe(canvas);
   resize();
 
+  // Thirty frames a second: nothing here moves fast enough to need more, and
+  // a page left open all day shouldn't keep the GPU at the screen's 60 or
+  // 120. The browser still calls every refresh; most are let go.
+  const FRAME = 1 / 30;
   const timer = new THREE.Timer();
+  let owed = 0;
   function frame(time) {
     requestAnimationFrame(frame);
     timer.update(time);
-    const dt = Math.min(timer.getDelta(), 0.1);
+    owed += timer.getDelta();
+    // a little slack, so a 60Hz screen's refreshes don't land just short
+    if (owed < FRAME * 0.9) return;
+    const dt = Math.min(owed, 0.1);
+    owed = 0;
     clock += dt;
 
     stepAlice(dt);
@@ -1856,6 +1865,9 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
       controls.target.lerp(shot.target, k);
       if (camera.position.distanceTo(shot.pos) < 0.05) shot = null;
     }
+    // The controls damp by a share per update; this keeps the glide after a
+    // drag what it was at 60 frames a second, whatever the rate.
+    controls.dampingFactor = 1 - Math.pow(1 - 0.08, dt * 60);
     controls.update();
 
     const m = reduceMotion ? 0 : 1;
@@ -1898,7 +1910,7 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
     }
     for (const w of watches) {
       w.rotation.y = Math.sin(clock * 0.3 + w.userData.phase) * 0.8 * m;
-      w.position.y += Math.sin(clock * 0.7 + w.userData.phase) * 0.004 * m;
+      w.position.y += Math.sin(clock * 0.7 + w.userData.phase) * 0.24 * dt * m;
     }
     meadow.sparkles.material.uniforms.time.value = reduceMotion ? 0 : clock;
     water.material.uniforms.time.value = clock * m;
