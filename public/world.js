@@ -26,7 +26,9 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { buildAlice } from "/alice-figure.js";
+import { loadAlice } from "/alice-model.js";
 import { buildCheshire } from "/cheshire-figure.js";
+import { loadCheshire } from "/cheshire-model.js";
 import { SUITS } from "/ui.js";
 import {
   CLEARING, CLEARING_R, DISTRICTS, KEYS, GREAT_TREE, CROQUET, CASTLE,
@@ -584,19 +586,42 @@ function buildGreatTree(scene, rand) {
   g.add(limb);
   scene.add(g);
 
-  const cheshire = buildCheshire();
-  const cat = cheshire.group;
+  // He starts as the Cat made of primitives, and becomes the modelled one
+  // once it's loaded; `current` is whichever he is.
+  let current = buildCheshire();
+  const cat = current.group;
   // Along the branch, belly on its top, face turned to the camera. He's built
   // head to +x; mirrored, his head leads out along a branch that points -x.
   // A big cat, but a cat: well under Alice's height, not the tree's.
   const along = 2.9, CAT_SCALE = 0.6;
-  const radius = BRANCH.r0 + (BRANCH.r1 - BRANCH.r0) * (along / BRANCH.len);
-  cat.position.copy(BRANCH.dir.clone().multiplyScalar(along).add(V(x, BRANCH.y + radius * 0.85, z)));
+  /** A point on top of the branch, `at` along it. */
+  const perch = (at) => {
+    const radius = BRANCH.r0 + (BRANCH.r1 - BRANCH.r0) * (at / BRANCH.len);
+    return BRANCH.dir.clone().multiplyScalar(at).add(V(x, BRANCH.y + radius * 0.75, z));
+  };
+  cat.position.copy(perch(along));
   cat.scale.set(-CAT_SCALE, CAT_SCALE, CAT_SCALE);
   cat.rotation.y = Math.atan2(BRANCH.dir.z, -BRANCH.dir.x);
   scene.add(cat);
 
-  return { cat: cheshire, hole: hole.getWorldPosition(new THREE.Vector3()).add(V(0, 0.7, 0)) };
+  loadCheshire("/models/cheshire.glb", { length: 1.5 })
+    .then((model) => {
+      // The model faces +z with his tail off to +x: turned so the tail runs
+      // back along the branch toward the trunk and his face comes round to
+      // the clearing. Plumper than the old Cat, with his tail up, so further
+      // out, clear of the leaves.
+      model.group.position.copy(perch(3.55));
+      model.group.rotation.y = 0.35;
+      scene.remove(cat);
+      scene.add(model.group);
+      current = model;
+    })
+    .catch((err) => console.warn("The Cat's model didn't load; he stays as he was.", err));
+
+  return {
+    cat: { update: (clock, opts) => current.update(clock, opts) },
+    hole: hole.getWorldPosition(new THREE.Vector3()).add(V(0, 0.7, 0)),
+  };
 }
 
 /** Toadstools along the way, wherever they're clear of the water and the paths. */
@@ -1449,11 +1474,21 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
   // Larger than life, as she so often was: at true scale against the
   // furniture she's a speck from where the camera sits.
   const ALICE_SCALE = 1.6;
-  const figure = buildAlice();
-  const me = figure.group;
+  // `me` is where she is; `figure` is what she looks like. She starts as the
+  // one made of primitives, and becomes the modelled one once it's loaded.
+  let figure = buildAlice();
+  const me = new THREE.Group();
+  me.add(figure.group);
   me.scale.setScalar(ALICE_SCALE);
   me.position.copy(CLEARING);
   scene.add(me);
+  loadAlice("/models/alice.glb", "/models/alice-walk.glb", { height: figure.height })
+    .then((model) => {
+      me.remove(figure.group);
+      me.add(model.group);
+      figure = model;
+    })
+    .catch((err) => console.warn("Alice's model didn't load; she stays as she was.", err));
 
   /* --- labels: HTML over the canvas, placed each frame ------------------ */
   const labels = [];
@@ -1663,16 +1698,19 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
 
   function stepAlice(dt) {
     let walking = false;
+    const hurry = current ? 1.25 : 0.6; // brisk on an errand, a stroll otherwise
     if (route.length) {
       const target = route[0];
       const dx = target.x - me.position.x, dz = target.z - me.position.z;
       const dist = Math.hypot(dx, dz);
-      const step = SPEED * (current ? 1.25 : 0.6) * dt;
+      const step = SPEED * hurry * dt;
       if (dist <= step) {
         me.position.x = target.x;
         me.position.z = target.z;
         route.shift();
         if (!route.length) at = headed;
+        // passing a point on the way is still walking; only the last one stops her
+        walking = route.length > 0;
       } else {
         me.position.x += (dx / dist) * step;
         me.position.z += (dz / dist) * step;
@@ -1716,7 +1754,8 @@ export function createWorld({ canvas, overlay, onDistrict, names }) {
       }
     }
 
-    figure.pose(dt, { walking, speed: current ? 1.25 : 0.75 });
+    // `speed` paces the primitive Alice's gait; `pace` (in her own units) the model's
+    figure.pose(dt, { walking, speed: current ? 1.25 : 0.75, pace: (SPEED * hurry) / ALICE_SCALE });
     if (!bubble.node.hidden && clock > bubble.until) hush();
   }
 

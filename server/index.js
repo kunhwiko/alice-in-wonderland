@@ -68,6 +68,7 @@ const MIME = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".md": "text/markdown; charset=utf-8",
+  ".glb": "model/gltf-binary",
 };
 
 function json(res, code, body) {

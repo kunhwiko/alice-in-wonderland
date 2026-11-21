@@ -46,13 +46,24 @@ with it and breaks your login everywhere else.
 
 ## The world
 
-`public/world.js` builds the whole place from three.js primitives at load: no
-models to fetch, no artwork to license. Alice herself is cones and spheres
-(`public/alice-figure.js`), and so is the Cheshire Cat on the great tree's
-branch (`public/cheshire-figure.js`). He vanishes the way the book has it, tail
-first and grin last, and comes back eyes first; his grin and eyes are painted
-on their own shells over his head so they can stay behind. With reduced motion
-he just stays. three.js is served from `node_modules` at
+`public/world.js` builds the whole place from three.js primitives at load,
+all but its two characters, which are models made with Meshy from a picture
+of each.
+
+Alice is rigged and animated (`public/models/alice.glb` with her idle and
+wave, and `alice-walk.glb` with the walk on the same skeleton), loaded by
+`public/alice-model.js`. The loader measures the walk's stride, so her steps
+keep pace with how fast she's going.
+
+The Cheshire Cat on the great tree's branch is a still model
+(`public/models/cheshire.glb`, loaded by `public/cheshire-model.js`). He
+vanishes the way the book has it: a dissolve closes in from the end of his
+tail to his grin, the face around his teeth thins away, the grin hangs there
+on its own, and then it goes too. He comes back eyes first. With reduced
+motion he just stays.
+
+Until a model has loaded, or if it can't, its character is the primitives of
+`public/alice-figure.js` or `public/cheshire-figure.js`. three.js is served from `node_modules` at
 `/vendor/three/` (an import map in `index.html`), so there's still no build step
 and no CDN.
 
