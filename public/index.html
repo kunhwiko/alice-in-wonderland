@@ -32,14 +32,14 @@
         <h1 id="title">Alice in Wonderland</h1>
         <p id="tagline"></p>
       </div>
-      <!-- The same three places the world has, for keyboards and for when
-           there's no WebGL to draw them with. Left to right as they lie on
-           the map: the Tea Party, then the Hall, then the Court. -->
+      <!-- The same three places the world has. Hidden while the world's own
+           signs do the job; app.js shows them when there's no WebGL to draw
+           it with. Left to right as they lie on the map: the Tea Party, then
+           the Hall, then the Court. -->
       <nav class="places">
-        <button id="go-tea" class="place place-tea"><span class="place-name"></span><span class="place-count"></span></button>
-        <button id="go-hall" class="place place-hall"><span class="place-name"></span><span class="place-count"></span></button>
-        <button id="go-court" class="place place-court"><span class="place-name"></span><span class="place-count"></span></button>
-        <button id="new-btn" class="primary">Shall we begin?</button>
+        <button id="go-tea" class="place place-tea" hidden><span class="place-name"></span><span class="place-count"></span></button>
+        <button id="go-hall" class="place place-hall" hidden><span class="place-name"></span><span class="place-count"></span></button>
+        <button id="go-court" class="place place-court" hidden><span class="place-name"></span><span class="place-count"></span></button>
       </nav>
     </header>
 
@@ -60,6 +60,8 @@
           <div id="tea-list"></div>
         </section>
         <section id="court" class="panel-view" hidden>
+          <!-- A new session: it starts here, so it's asked for here -->
+          <div class="court-begin"><button id="new-btn" class="primary">Shall we begin?</button></div>
           <!-- Alice's desk: everything waiting on you, answerable in place -->
           <section id="desk" hidden></section>
           <section id="queue"></section>
@@ -98,8 +100,6 @@
           <textarea name="prompt" required rows="4" placeholder="Have a look at the failing test…"></textarea>
         </label>
         <menu>
-          <!-- formnovalidate: without it the required fields block the close -->
-          <button value="cancel" type="submit" class="ghost" formnovalidate>Never mind</button>
           <button value="go" type="submit" class="primary" id="new-go"></button>
         </menu>
       </form>

@@ -177,6 +177,7 @@ h1::after {
   background: var(--glass); backdrop-filter: blur(6px); box-shadow: var(--lift);
   font-family: var(--serif); font-weight: 600;
 }
+.place[hidden] { display: none; }
 .place.active { border-color: var(--alice); background: var(--alice-wash); }
 .place-count:empty { display: none; }
 .place-count {
@@ -185,7 +186,9 @@ h1::after {
   font: 700 11.5px/20px ui-sans-serif, system-ui, sans-serif;
 }
 .place-tea .place-count { background: var(--gold-deep); }
-#new-btn { box-shadow: var(--lift); }
+
+/* The Court's first line: a new session, above the ones already going. */
+.court-begin { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 
 /* While a panel is open the HUD's right-hand buttons would sit under it. */
 body.panel-open .places { margin-right: calc(var(--panel-w) - 16px + 12px); }

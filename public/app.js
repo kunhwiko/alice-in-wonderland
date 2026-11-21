@@ -158,6 +158,8 @@ let world = null;
 // Whether the server's hello has arrived. Until it has, the page knows of
 // nothing, and a baseline taken then would make everything news.
 let greeted = false;
+// Your home folder, from the hello: where a new session works unless you say.
+let home = "";
 const noticer = createNoticer();
 const pick = (xs) => xs[Math.floor(Math.random() * xs.length)];
 
@@ -232,6 +234,7 @@ function onEvent(e) {
   const hello = ev.type === "hello";
   if (hello) {
     greeted = true;
+    home = ev.home ?? home;
     setSlack(ev.slack);
     setHall(ev.hall);
   }
@@ -275,14 +278,20 @@ try {
   const n = document.getElementById("no-world");
   n.textContent = alice.noWorld;
   n.hidden = false;
+  // No signs to click, so the buttons up top are the way in.
+  for (const b of Object.values(places)) b.hidden = false;
 }
 
 const dialog = document.getElementById("new-dialog");
 const newForm = document.getElementById("new-form");
 
-document.getElementById("new-btn").onclick = () => dialog.showModal();
+document.getElementById("new-btn").onclick = () => {
+  // Every time it opens: closing it clears the form.
+  if (!newForm.cwd.value) newForm.cwd.value = home;
+  dialog.showModal();
+};
 
-// Three ways out: the ✕, "Never mind", and Esc (which <dialog> gives us free).
+// Two ways out: the ✕, and Esc (which <dialog> gives us free).
 // Clicking the backdrop deliberately isn't one: a stray click, or a text
 // selection dragged past the edge, shouldn't throw away a half-written prompt.
 const dismiss = () => {
@@ -293,7 +302,6 @@ document.getElementById("new-dismiss").onclick = dismiss;
 dialog.addEventListener("cancel", () => newForm.reset()); // Esc
 
 newForm.onsubmit = async (e) => {
-  if (e.submitter?.value === "cancel") return dismiss();
   const cwd = newForm.cwd.value.trim();
   const prompt = newForm.prompt.value.trim();
   const name = newForm.sessionName.value.trim();

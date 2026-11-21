@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, dirname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { store } from "./store.js";
 import { createSessionManager } from "./sessions.js";
 import { createBriefer } from "./briefing.js";
@@ -142,7 +143,8 @@ const server = createServer(async (req, res) => {
         connection: "keep-alive",
       });
       // Everything the page needs to draw itself, so it needs no fetch of its own.
-      const hello = { type: "hello", todos: store.all().map(present), slack: slack.snapshot(), hall: hall.snapshot() };
+      // `home` is where a new session works unless told otherwise.
+      const hello = { type: "hello", home: homedir(), todos: store.all().map(present), slack: slack.snapshot(), hall: hall.snapshot() };
       res.write(`data: ${JSON.stringify(hello)}\n\n`);
       clients.add(res);
       const keepAlive = setInterval(() => res.write(": ping\n\n"), 25_000);
